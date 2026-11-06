@@ -638,8 +638,8 @@ int CGlassLayerSurface::frostBoxes(const PHLMONITOR& monitor, const float* windo
     if (!resource)
         return 0;
 
-    // A shell's input region is its panels. Any panel over a window frosts whole, not just
-    // where the window is: half a panel frosted reads as two materials with a seam between.
+    // A shell's input region is its panels, and only a panel over a window frosts at all. The
+    // shader thins the frost out with distance from the window, slowly enough to leave no seam.
     // The margin keeps the mask's soft edge outside the panel.
     const float scale  = monitor->m_scale;
     const float margin = 60.0f * scale;

@@ -166,6 +166,8 @@ uniform int   frostRectCount;
 uniform vec4  frostWindows[16]; // the windows themselves, same layout
 uniform int   frostWindowCount;
 uniform float frostDim;        // how far a bright window behind the glass is darkened
+const float FROST_HUG_FROM_PX = 20.0;  // logical px outside a window: frost starts to thin out ...
+const float FROST_HUG_TO_PX   = 140.0; // ... and here the panel is clear
 float frostHere = 0.0;         // frostAmount where this pixel is
 #endif
 #endif
@@ -182,6 +184,7 @@ uniform float contourStripDim;    // how far strips darken what is bright behind
 uniform float contourStripBevel;  // how much of bevel_strength a strip keeps: a frame stays quieter than a panel's rim
 uniform float contourRimFloor;    // how much of its highlight a rim keeps facing away from the light
 const float LAYER_LIGHT_HEIGHT = 500.0; // logical px over the glass
+const float SOFT_NORMAL_REACH_PX = 56.0; // logical px along the edge, each way
 uniform vec4  cardRects[24];      // hg.cards(), framebuffer px within the layer: x0, y0, x1, y1
 uniform float cardRadii[24];
 uniform int   cardCount;
@@ -452,7 +455,14 @@ void main() {
             vec2 d = max(frostRects[i].xy - p, p - frostRects[i].zw);
             box = max(box, 1.0 - smoothstep(-SOFT_PX, SOFT_PX, max(d.x, d.y)));
         }
-        frostHere = frostAmount * box;
+        // The panel stays clear glass over wallpaper. The frost hugs the windows, and is gone well
+        // before the feather could read as an edge of its own.
+        float nearWindow = 0.0;
+        for (int i = 0; i < frostWindowCount; i++) {
+            vec2 d = max(frostWindows[i].xy - p, p - frostWindows[i].zw);
+            nearWindow = max(nearWindow, 1.0 - smoothstep(FROST_HUG_FROM_PX * monitorScale, FROST_HUG_TO_PX * monitorScale, max(d.x, d.y)));
+        }
+        frostHere = frostAmount * box * nearWindow;
     }
 #endif
 
@@ -569,9 +579,17 @@ void main() {
         // Next to a panel's corner the look is cut short as well, but by the edge to the side,
         // which faces across the look. A strip's far side faces along it. Without this a panel
         // loses its rim around each corner, and keeps a streak along the diagonal, where the
-        // depth does go on growing.
+        // depth does go on growing. The short end of a thin card has such edges on both sides, so
+        // what counts then is the deeper of the two sides: a panel has room on one of them.
         float along = contourGradLen > 0.05 && aheadLen > 0.05 ? abs(dot(ahead.gb / aheadLen, inwardDir)) : 1.0;
-        float depthAhead = mix(contourThinPx * 2.0, -ahead.r, smoothstep(0.4, 0.8, along));
+        float depthAhead = -ahead.r;
+        if (along < 0.8) {
+            vec2  lookAt = uv + inwardDir * contourThinPx * 2.0 * invFullSize;
+            vec2  side   = vec2(-inwardDir.y, inwardDir.x) * contourThinPx * 1.5 * invFullSize;
+            float roomy  = max(-texture(contourTex, (lookAt + side) * contourUVScale).r,
+                               -texture(contourTex, (lookAt - side) * contourUVScale).r);
+            depthAhead = mix(max(depthAhead, roomy), depthAhead, smoothstep(0.4, 0.8, along));
+        }
         thinGate = smoothstep(contourThinPx, contourThinPx * 1.75, depthAhead);
         stripHere = 1.0 - smoothstep(contourThinPx * 1.5, contourThinPx * 1.95, depthAhead);
         edgeProximity *= thinGate;
@@ -583,6 +601,17 @@ void main() {
     // fast. A strong bend there pinches into pointed folds, so it fades out toward that edge.
     float edgeFadeNearBox = smoothstep(14.0, 120.0, min(boxPx.x, boxPx.y));
     edgeProximity *= boxFade * edgeFadeNearBox;
+    // Deeper than a tight corner's own radius, the normal flips across the corner's diagonal: a
+    // bend there folds into a wedge, and a sharp light stops dead on a straight line. Reading the
+    // normal further along the edge as well turns it over a longer stretch, as the wider radius
+    // in lightNormal() does for a window's box.
+    vec2 softOutward = contourOutward;
+    if (edgeProximity > 0.005) {
+        vec2 side = vec2(-contourOutward.y, contourOutward.x) * SOFT_NORMAL_REACH_PX * monitorScale * invFullSize;
+        softOutward += texture(contourTex, (uv + side) * contourUVScale).gb + texture(contourTex, (uv - side) * contourUVScale).gb;
+        softOutward = dot(softOutward, softOutward) > 1e-4 ? normalize(softOutward) : contourOutward;
+        inwardDir = -softOutward;
+    }
 #ifdef HYPRGLASS_FEATURE_FROST
     // The rim stays clear, as a bend has nothing to bend in a blurred backdrop: a thick clear
     // edge around a frosted middle, which is also where the panel's text sits.
@@ -612,15 +641,7 @@ void main() {
         float rim = exp(bevelSdf / max(lightA.z, 1.0)) * thinGate * (1.0 - stripHere);  // 1 at the edge, fading inward
 #ifdef HYPRGLASS_FEATURE_CONTOUR
         rim *= edgeFadeNearBox; // ends softly before the frame, like the bend
-        // A traced corner can be tight, and a sharp light would stop dead partway round it, on a
-        // straight line. Reading the normal further along the edge as well turns it over a longer
-        // stretch, as the wider radius in lightNormal() does for a window's box.
-        vec2  n = contourOutward;
-        if (rim > 0.002) {
-            vec2 along = vec2(-contourOutward.y, contourOutward.x) * lightA.z * 4.0 * invFullSize;
-            n += texture(contourTex, (uv + along) * contourUVScale).gb + texture(contourTex, (uv - along) * contourUVScale).gb;
-            n = dot(n, n) > 1e-4 ? normalize(n) : contourOutward;
-        }
+        vec2  n   = softOutward;
 #else
         vec2  n   = lightNormal(uv, max(pickCornerRadius((uv - 0.5) * fullSize, radii), lightA.z * 6.0));
 #endif
