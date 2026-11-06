@@ -135,6 +135,8 @@ struct SMaskInfo {
     // Traced layers frost only inside these boxes: x0, y0, x1, y1 in layer px.
     const float* frostRects     = nullptr;
     int          frostRectCount = 0;
+    const float* frostWindows     = nullptr; // the windows themselves, same layout
+    int          frostWindowCount = 0;
     // hg.cards(): x0, y0, x1, y1 and a radius per card, in layer px.
     const float* cardRects = nullptr;
     const float* cardRadii = nullptr;

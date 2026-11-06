@@ -112,6 +112,8 @@ struct SGlassUniforms {
     GLint cardLook           = -1;
     GLint frostRects         = -1;
     GLint frostRectCount     = -1;
+    GLint frostWindows       = -1;
+    GLint frostWindowCount   = -1;
     GLint frostDim           = -1;
 };
 

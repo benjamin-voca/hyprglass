@@ -628,9 +628,7 @@ bool CGlassLayerSurface::attachContour(Render::CRenderContext& ctx, PHLMONITOR m
     return true;
 }
 
-int CGlassLayerSurface::frostBoxes(const PHLMONITOR& monitor, const CBox& box, float* out, int maxRects) const {
-    std::array<float, 16 * 4> windows{};
-    const int                 windowCount = Frost::visibleWindowRects(monitor, box, windows.data(), 16);
+int CGlassLayerSurface::frostBoxes(const PHLMONITOR& monitor, const float* windows, int windowCount, float* out, int maxRects) const {
     if (windowCount == 0)
         return 0;
 
@@ -843,11 +841,14 @@ void CGlassLayerSurface::compositeAndRestore(Render::CRenderContext& ctx, PHLMON
     // Frost: traced layers only, and only over the windows behind them.
     GlassRenderer::SFrostInput frostInput;
     std::array<float, 16 * 4>  frostRects{};
+    std::array<float, 16 * 4>  frostWindows{};
     if (contoured) {
         const float frostSetting = resolvePresetFloat(resolveContext, &SPresetValues::frost, &SOverridableConfig::frost);
         if (frostSetting > 0.0f || m_frost.active()) {
-            maskInfo.frostRectCount = frostSetting > 0.0f ? frostBoxes(monitor, box, frostRects.data(), 16) : 0;
-            maskInfo.frostRects     = frostRects.data();
+            maskInfo.frostWindowCount = frostSetting > 0.0f ? Frost::visibleWindowRects(monitor, box, frostWindows.data(), 16) : 0;
+            maskInfo.frostWindows     = frostWindows.data();
+            maskInfo.frostRectCount   = frostBoxes(monitor, frostWindows.data(), maskInfo.frostWindowCount, frostRects.data(), 16);
+            maskInfo.frostRects       = frostRects.data();
 
             if (m_frost.step(maskInfo.frostRectCount > 0 ? frostSetting : 0.0f, true, std::chrono::steady_clock::now()))
                 damageSampleRegion();

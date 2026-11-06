@@ -41,7 +41,7 @@ class CGlassLayerSurface {
     void damageIfMoved();
     void damageSampleRegion();
     void damagePanels();
-    [[nodiscard]] int frostBoxes(const PHLMONITOR& monitor, const CBox& box, float* out, int maxRects) const;
+    [[nodiscard]] int frostBoxes(const PHLMONITOR& monitor, const float* windows, int windowCount, float* out, int maxRects) const;
     [[nodiscard]] bool isContoured() const { return m_contour.framebuffer() != nullptr; }
 
     // Content below committed damage in our sample region — resample next frame

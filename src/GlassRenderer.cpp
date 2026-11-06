@@ -648,6 +648,9 @@ void applyGlassEffect(Render::CRenderContext& ctx,
             glUniform1i(uniforms.frostRectCount, mask->frostRects ? std::min(mask->frostRectCount, 16) : 0);
             if (mask->frostRects && mask->frostRectCount > 0)
                 glUniform4fv(uniforms.frostRects, std::min(mask->frostRectCount, 16), mask->frostRects);
+            glUniform1i(uniforms.frostWindowCount, mask->frostWindows ? std::min(mask->frostWindowCount, 16) : 0);
+            if (mask->frostWindows && mask->frostWindowCount > 0)
+                glUniform4fv(uniforms.frostWindows, std::min(mask->frostWindowCount, 16), mask->frostWindows);
             glUniform1f(uniforms.frostDim, thinConfig.contourFrostDim ? static_cast<float>(**thinConfig.contourFrostDim) : 0.1f);
         }
     }

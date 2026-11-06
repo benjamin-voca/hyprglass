@@ -163,6 +163,8 @@ const float FROST_DIM = 0.10;             // ... and slightly deeper, at full am
 // where a window is behind it. Clear glass over an app would stack its text under the panel's.
 uniform vec4  frostRects[16];  // window boxes in layer px: x0, y0, x1, y1
 uniform int   frostRectCount;
+uniform vec4  frostWindows[16]; // the windows themselves, same layout
+uniform int   frostWindowCount;
 uniform float frostDim;        // how far a bright window behind the glass is darkened
 float frostHere = 0.0;         // frostAmount where this pixel is
 #endif
@@ -211,7 +213,15 @@ vec4 sampleBlurred(vec2 wuv) {
 #ifdef HYPRGLASS_FEATURE_FROST
     tuv = clamp(tuv, 0.001, 0.999);
 #ifdef HYPRGLASS_FEATURE_CONTOUR
-    return mix(texture(tex, tuv), texture(frostTex, tuv), frostHere);
+    // A clear rim may bend wallpaper, never a window: sharp app text at the edge of a panel
+    // reads as corruption. So what decides is where this sample lands, after the bend.
+    float here = frostHere;
+    vec2  at   = wuv * fullSize;
+    for (int i = 0; i < frostWindowCount; i++) {
+        vec2 d = max(frostWindows[i].xy - at, at - frostWindows[i].zw);
+        here = max(here, frostAmount * (1.0 - smoothstep(-6.0, 6.0, max(d.x, d.y))));
+    }
+    return mix(texture(tex, tuv), texture(frostTex, tuv), here);
 #else
     return mix(texture(tex, tuv), texture(frostTex, tuv), frostAmount);
 #endif

@@ -118,6 +118,8 @@ bool CShaderManager::compileGlassProgram(SGlassProgram& glass, GlassFeatureMask 
     glassUniforms.cardLook              = glGetUniformLocation(program, "cardLook");
     glassUniforms.frostRects            = glGetUniformLocation(program, "frostRects");
     glassUniforms.frostRectCount        = glGetUniformLocation(program, "frostRectCount");
+    glassUniforms.frostWindows          = glGetUniformLocation(program, "frostWindows");
+    glassUniforms.frostWindowCount      = glGetUniformLocation(program, "frostWindowCount");
     glassUniforms.frostDim              = glGetUniformLocation(program, "frostDim");
 
     return true;
