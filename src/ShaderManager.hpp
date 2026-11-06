@@ -104,11 +104,26 @@ struct SGlassUniforms {
     GLint contourUVScale     = -1;
     GLint contourReferencePx = -1;
     GLint contourReachPx     = -1;
+    GLint contourThinPx      = -1;
+    GLint contourStripDim    = -1;
+    GLint cardRects          = -1;
+    GLint cardRadii          = -1;
+    GLint cardCount          = -1;
+    GLint cardLook           = -1;
+    GLint frostRects         = -1;
+    GLint frostRectCount     = -1;
+    GLint frostDim           = -1;
 };
 
 struct SBlurUniforms {
     GLint direction = -1;
     GLint radius    = -1;
+};
+
+// Lifts an app's flat background off its pixels (see chromekey.frag).
+struct SChromeProgram {
+    SP<CShader> shader = makeShared<CShader>();
+    GLint padding = -1, fullSize = -1, radius = -1, roundingPower = -1, keepAlpha = -1, alpha = -1, splitPx = -1;
 };
 
 // The programs that trace a layer's outline into a distance field (see Contour.hpp), and
@@ -161,6 +176,9 @@ class CShaderManager {
     // reported once, not retried before the plugin is reloaded.
     [[nodiscard]] const SContourPrograms* contourPrograms();
 
+    // The chrome key program, compiled on first use. Null when it failed to compile.
+    [[nodiscard]] const SChromeProgram* chromeProgram();
+
     SP<CShader>    blurShader = makeShared<CShader>();
     SBlurUniforms  blurUniforms;
 
@@ -174,6 +192,10 @@ class CShaderManager {
     SContourPrograms m_contour;
     bool             m_contourCompiled = false;
     bool             m_contourFailed   = false;
+
+    SChromeProgram m_chrome;
+    bool           m_chromeCompiled = false;
+    bool           m_chromeFailed   = false;
 
     [[nodiscard]] static std::string loadShaderSource(const char* fileName);
     [[nodiscard]] static bool compileGlassProgram(SGlassProgram& program, GlassFeatureMask features);

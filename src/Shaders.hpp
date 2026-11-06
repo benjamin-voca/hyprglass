@@ -158,6 +158,14 @@ uniform float frostAmount;   // frost times its ease, > 0
 
 const float FROST_SATURATION_LIFT = 0.35; // frosted glass reads slightly more colourful ...
 const float FROST_DIM = 0.10;             // ... and slightly deeper, at full amount
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+// A traced layer spans the monitor, and most of it is over wallpaper, so it frosts only
+// where a window is behind it. Clear glass over an app would stack its text under the panel's.
+uniform vec4  frostRects[16];  // window boxes in layer px: x0, y0, x1, y1
+uniform int   frostRectCount;
+uniform float frostDim;        // how far a bright window behind the glass is darkened
+float frostHere = 0.0;         // frostAmount where this pixel is
+#endif
 #endif
 
 #ifdef HYPRGLASS_FEATURE_CONTOUR
@@ -167,6 +175,12 @@ uniform highp sampler2D contourTex; // r: signed distance to the outline in px (
 uniform vec2 contourUVScale;      // box UV -> field UV: the field covers whole texels, the box need not
 uniform float contourReferencePx; // the bezel is a fraction of this, not of the layer's short side
 uniform float contourReachPx;     // where the field stops; the edge effects fade out before it
+uniform float contourThinPx;      // strips thinner than this keep no edge effects, framebuffer px (0 = off)
+uniform float contourStripDim;    // how far strips darken what is bright behind them, so small text holds
+uniform vec4  cardRects[24];      // hg.cards(), framebuffer px within the layer: x0, y0, x1, y1
+uniform float cardRadii[24];
+uniform int   cardCount;
+uniform vec3  cardLook;           // bend px, chroma, light
 #endif
 
 in vec2 v_texcoord;
@@ -187,10 +201,20 @@ vec2 toTexUV(vec2 wuv) {
 }
 
 vec4 sampleBlurred(vec2 wuv) {
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+    // A screen-sized layer has nothing past the screen edge: its padding is cleared to
+    // black. A bend that reaches there folds back instead, so a bar's rim never goes dark.
+    wuv = 1.0 - abs(1.0 - abs(wuv));
+    wuv = clamp(wuv, 2.0 * invFullSize, 1.0 - 2.0 * invFullSize);
+#endif
     vec2 tuv = toTexUV(toSampleBoxUV(wuv));
 #ifdef HYPRGLASS_FEATURE_FROST
     tuv = clamp(tuv, 0.001, 0.999);
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+    return mix(texture(tex, tuv), texture(frostTex, tuv), frostHere);
+#else
     return mix(texture(tex, tuv), texture(frostTex, tuv), frostAmount);
+#endif
 #else
     return texture(tex, clamp(tuv, 0.001, 0.999));
 #endif
@@ -402,6 +426,19 @@ float lensCornerFade(vec2 uv, float rimPx) {
 void main() {
     vec2 uv = v_texcoord;
 
+#if defined(HYPRGLASS_FEATURE_FROST) && defined(HYPRGLASS_FEATURE_CONTOUR)
+    {
+        const float SOFT_PX = 48.0;
+        vec2  p   = uv * fullSize;
+        float box = 0.0;
+        for (int i = 0; i < frostRectCount; i++) {
+            vec2 d = max(frostRects[i].xy - p, p - frostRects[i].zw);
+            box = max(box, 1.0 - smoothstep(-SOFT_PX, SOFT_PX, max(d.x, d.y)));
+        }
+        frostHere = frostAmount * box;
+    }
+#endif
+
     // Layers only: sample the temp FBO to get the rendered surface pixel.
     // Glass only covers visible content: layer pixels under the mask threshold get none.
     // For windows, hasMask is false and this block is skipped entirely.
@@ -493,13 +530,35 @@ void main() {
     // ========================================
     // crease-free bevel distance, so the edge has no seam along the corner diagonals;
     // it assumes circular corners, so a superellipse outline keeps the exact SDF
+    float thinGate  = 1.0; // 0 on a strip too thin to hold a lens
+    float stripHere = 0.0; // 1 on a strip or a bar: no lens to speak of, and it stays put under motion
 #ifdef HYPRGLASS_FEATURE_CONTOUR
+    // The field's data ends at the layer box, and its distances collapse there. That is the
+    // screen edge, not an outline, so nothing may light it.
+    vec2  boxPx   = min(uv, 1.0 - uv) * fullSize;
+    float boxFade = smoothstep(2.0, 10.0, min(boxPx.x, boxPx.y));
     // The field is smoothed, so it has no corner seam to avoid. Its reach is the end of the
     // data: the window takes the effects to zero before it, rather than cutting them off.
     float bevelSdf = cornerSdf;
     float edgeProximity = min(exp(bevelSdf * invBezelWidthPx), 1.0) *
                           (1.0 - smoothstep(0.5 * contourReachPx, contourReachPx, -bevelSdf));
     vec2 inwardDir = -contourOutward;
+    if (contourThinPx > 0.0) {
+        // Look further in along the normal. A panel keeps getting deeper; a strip ends at
+        // the screen edge, where the depth stops growing, so its rim can bend nothing.
+        // This is what lets a wide lens on panels share one outline with a thin frame.
+        float ahead = texture(contourTex, (uv + inwardDir * contourThinPx * 2.0 * invFullSize) * contourUVScale).r;
+        thinGate = smoothstep(contourThinPx, contourThinPx * 1.75, -ahead);
+        stripHere = 1.0 - smoothstep(contourThinPx * 1.5, contourThinPx * 1.95, -ahead);
+        edgeProximity *= thinGate;
+    }
+    // Where the field folds, past the corner of a panel, its direction flips across a line
+    // and a bend there draws a streak. The smoothed gradient goes weak exactly there.
+    edgeProximity *= smoothstep(0.2, 0.8, contourGradLen);
+    // Panels meet the frame near the screen edge, in a tight concave fillet whose normal swings
+    // fast. A strong bend there pinches into pointed folds, so it fades out toward that edge.
+    float edgeFadeNearBox = smoothstep(14.0, 120.0, min(boxPx.x, boxPx.y));
+    edgeProximity *= boxFade * edgeFadeNearBox;
 #else
     float bevelSdf = roundingPower == 2.0 ? getBevelSDF(uv) : cornerSdf;
     float edgeProximity = min(exp(bevelSdf * invBezelWidthPx), 1.0);
@@ -521,10 +580,17 @@ void main() {
         // one direction per window (from its centre), like sunlight: a per-pixel
         // direction fans out into a pointed cone when the light sits near an edge
         vec2  toL = lightPos - (boxPos + 0.5 * fullSize);
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+        vec2  n   = contourOutward;   // a traced outline has its own normal, and no box corners
+#else
         vec2  n   = lightNormal(uv, max(pickCornerRadius((uv - 0.5) * fullSize, radii), lightA.z * 6.0));
+#endif
         vec2  L   = length(toL) > 1.0 ? normalize(toL) : vec2(0.0, -1.0);
         float ndl = dot(n, L);
-        float rim = exp(bevelSdf / max(lightA.z, 1.0));       // 1 at the edge, fading inward
+        float rim = exp(bevelSdf / max(lightA.z, 1.0)) * thinGate * (1.0 - stripHere);  // 1 at the edge, fading inward
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+        rim *= edgeFadeNearBox; // ends softly before the frame, like the bend
+#endif
         float lit = pow(max(ndl, 0.0), lightA.y);
         float far = pow(max(-ndl, 0.0), lightA.y) * lightA.w;
         lightAmt  = (lit + far) * rim * lightA.x;
@@ -677,7 +743,8 @@ void main() {
     // PARALLAX — the view behind the glass shifts against the pane as the
     // cursor moves (like tilting thick glass), a bit more toward the rim.
     // Same shift for every channel, so no colour fringing across the pane.
-    vec2 parallaxUV = parallax.xy * (1.0 + parallax.z * edgeProximity) / fullSize * materialize;
+    // A strip stays put: its view would fold at the screen edge, and show as a line in it.
+    vec2 parallaxUV = parallax.xy * (1.0 + parallax.z * edgeProximity) / fullSize * materialize * thinGate * (1.0 - stripHere);
 
     // ========================================
     // LIQUID TOUCH — the pointer stirs a thin clear liquid on the glass: where
@@ -707,10 +774,43 @@ void main() {
     vec2 uvG = uv + offsetG + domeUV + parallaxUV + oilUV + liqUV;
     vec2 uvB = uv + offsetB + domeUV + parallaxUV + oilUV + liqUV + liqSpread * 0.5;
 
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+    // CARDS: rounded rects the shell draws inside the sheet (hg.cards) bend at their own rim,
+    // as small pieces of the same glass. Exact and cheap, as they are analytic, not traced.
+    float cardRim = 0.0;
+    vec2  cardNormal = vec2(0.0);
+    bool  cardBends = false;
+    for (int i = 0; i < cardCount; i++) {
+        vec2 centre = 0.5 * (cardRects[i].xy + cardRects[i].zw);
+        vec2 half_  = 0.5 * (cardRects[i].zw - cardRects[i].xy);
+        vec2 local  = uv * fullSize - centre;
+        if (abs(local.x) > half_.x || abs(local.y) > half_.y)
+            continue;
+        float r = min(cardRadii[i], min(half_.x, half_.y));
+        vec2  q = abs(local) - half_ + r;
+        float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+        if (d > 0.0)
+            continue;
+        vec2 n = q.x > 0.0 && q.y > 0.0 ? normalize(q) : (q.x > q.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+        cardNormal = n * sign(local);
+        cardRim    = exp(d / 1.6);
+        vec2 bend  = -cardNormal * exp(d / 9.0) * cardLook.x * invFullSize;
+        uvR += bend * (1.0 - cardLook.y);
+        uvG += bend;
+        uvB += bend * (1.0 + cardLook.y);
+        cardBends = cardLook.x > 0.001;
+        break;
+    }
+#endif
+
 #ifdef HYPRGLASS_FEATURE_LENS_EDGE
     if ((chromaticAberration > 0.001 && inRim) || liqOn == 1) {
 #else
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+    if ((chromaticAberration > 0.001 && edgeProximity > 0.01) || liqOn == 1 || cardBends) {
+#else
     if ((chromaticAberration > 0.001 && edgeProximity > 0.01) || liqOn == 1) {
+#endif
 #endif
         color.r = sampleBlurred(uvR).r;
         color.g = sampleBlurred(uvG).g;
@@ -724,7 +824,12 @@ void main() {
     // a little more colour and depth, before the theme's tone mapping below.
     {
         float frostLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+        // Only where it is bright: a dark app behind the glass needs no help.
+        color = max(color, 0.0) * (1.0 - frostDim * frostHere * smoothstep(0.1, 0.7, frostLum));
+#else
         color = max(mix(vec3(frostLum), color, 1.0 + FROST_SATURATION_LIFT * frostAmount), 0.0) * (1.0 - FROST_DIM * frostAmount);
+#endif
     }
 #endif
 
@@ -754,6 +859,12 @@ void main() {
     float sat = max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b));
     float darkFactor = 1.0 - vibrancyDarkness * (1.0 - blurredLum);
     color = mix(vec3(currentLum), color, 1.0 + vibrancy * sat * darkFactor);
+
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+    // Small labels live on the bar with nothing to frost them, so only what is bright gets
+    // darker: a dark wallpaper leaves the strip alone, a pale one does not wash its text out.
+    color *= 1.0 - contourStripDim * stripHere * smoothstep(0.2, 0.75, blurredLum);
+#endif
 
     // ========================================
     // COLOR TINT OVERLAY
@@ -803,6 +914,9 @@ void main() {
         float core = 0.25 * sizePx;
         float tail = sizePx;
         float ring = (1.0 - smoothstep(-core, 0.0, cornerSdf)) * smoothstep(-tail, -core, cornerSdf);
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+        ring *= boxFade;
+#endif
 
         // lit side faces the light, the far side fades out and can be shadowed
 #ifdef HYPRGLASS_FEATURE_CONTOUR
@@ -871,6 +985,16 @@ void main() {
     }
 
     color += lightColor * lightAmt * 0.55 + vec3(1.0, 0.99, 0.97) * glowAmt * 0.35;
+
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+    if (cardRim > 0.0) {
+        // Same light as the outer rim, so a card's highlight moves with it.
+        vec2  toLight = lightPos - (boxPos + 0.5 * fullSize);
+        vec2  dir     = length(toLight) > 1.0 ? normalize(toLight) : vec2(0.0, -1.0);
+        float facing  = clamp(dot(cardNormal, dir) * 0.5 + 0.5, 0.0, 1.0);
+        color += vec3(1.0, 0.99, 0.97) * cardRim * cardLook.z * (0.25 + 0.75 * facing * facing);
+    }
+#endif
 
     // oil sheen: soft-light the film colour into the glass where the film is thick
     if (oilSlick > 0.0) {
@@ -1121,6 +1245,79 @@ void main() {
     float T = texture(tex, v_texcoord + vec2(0.0, texel.y)).x;
     float B = texture(tex, v_texcoord - vec2(0.0, texel.y)).x;
     fragColor = vec4(texture(uVel, v_texcoord).xy - vec2(R - L, T - B), 0.0, 1.0);
+}
+)GLSL"},
+
+    // Chrome glass: what the app drew over its own flat background, lifted off it. Same idea
+    // as "colour to alpha": a pixel is taken as some foreground over the key colour, with the
+    // least alpha that explains it. There is no threshold, so text keeps its antialiasing and
+    // a slightly lighter toolbar becomes a faint veil over the glass.
+    {"chromekey.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+uniform sampler2D tex;
+uniform vec2  padding;       // box UV -> padded copy UV
+uniform vec2  fullSize;      // the keyed box, px
+uniform float radius;        // window corner radius, px
+uniform float roundingPower;
+uniform float keepAlpha;     // how much of the frame colour stays, as one tint over the whole box
+uniform float alpha;         // the window's fade
+uniform float splitPx;       // where the tab strip ends and the toolbar starts, 0 for one key
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+vec2 toCopy(vec2 uv) { return uv * (1.0 - 2.0 * padding) + padding; }
+
+// The least alpha that explains `pixel` as some colour over `key`.
+float liftedAlpha(vec3 pixel, vec3 key) {
+    vec3 d  = pixel - key;
+    vec3 a3 = max(d / max(vec3(1.0) - key, vec3(0.001)), -d / max(key, vec3(0.001)));
+    return clamp(max(max(a3.r, a3.g), a3.b), 0.0, 1.0);
+}
+
+void main() {
+    vec2 px = v_texcoord * fullSize;
+    // The top corners are the only ones this box has.
+    float cornerAlpha = 1.0;
+    if (radius > 0.0) {
+        vec2 q = max(vec2(radius) - vec2(min(px.x, fullSize.x - px.x), px.y), vec2(0.0));
+        float d = pow(pow(q.x, roundingPower) + pow(q.y, roundingPower), 1.0 / roundingPower) - radius;
+        if (d > 0.0) discard;
+        cornerAlpha = 1.0 - smoothstep(-1.5, 0.5, d);
+    }
+
+    vec3 pixel = texture(tex, toCopy(v_texcoord)).rgb;
+    // The window's top row is its frame colour, above any tab, at any window size.
+    vec3 frame = texture(tex, toCopy(vec2(0.5, 1.5 / fullSize.y))).rgb;
+    vec3 key   = frame;
+    float a    = liftedAlpha(pixel, frame);
+
+    // A toolbar is a second flat colour. Below the tabs either one is background, so the two
+    // read as one sheet. Above that only the frame is: the active tab keeps its veil.
+    if (splitPx > 0.0 && px.y >= splitPx) {
+        vec3  bar  = texture(tex, toCopy(vec2(1.0 - 6.0 / fullSize.x, 1.0 - 20.0 / fullSize.y))).rgb;
+        float aBar = liftedAlpha(pixel, bar);
+        if (aBar < a) {
+            a   = aBar;
+            key = bar;
+        }
+    }
+
+    // Premultiplied: the foreground lifted off its key, over one tint of the frame colour.
+    vec3 foreground = pixel - key * (1.0 - a);
+    float boosted   = a + 0.6 * a * (1.0 - a);
+    foreground *= boosted / max(a, 0.001);
+    a = boosted;
+
+    // Window buttons are drawn thin and dim for an opaque frame. On glass they would vanish.
+    if (splitPx > 0.0 && px.y < splitPx && px.x > fullSize.x - splitPx * 5.0 && a > 0.02) {
+        float strong = min(a * 1.9, 1.0);
+        foreground   = mix(foreground / max(a, 0.001), vec3(0.95), 0.8) * strong;
+        a            = strong;
+    }
+    fragColor = vec4(foreground + frame * keepAlpha * (1.0 - a), a + keepAlpha * (1.0 - a)) * cornerAlpha * alpha;
 }
 )GLSL"},
 

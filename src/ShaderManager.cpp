@@ -110,6 +110,15 @@ bool CShaderManager::compileGlassProgram(SGlassProgram& glass, GlassFeatureMask 
     glassUniforms.contourUVScale        = glGetUniformLocation(program, "contourUVScale");
     glassUniforms.contourReferencePx    = glGetUniformLocation(program, "contourReferencePx");
     glassUniforms.contourReachPx        = glGetUniformLocation(program, "contourReachPx");
+    glassUniforms.contourThinPx         = glGetUniformLocation(program, "contourThinPx");
+    glassUniforms.contourStripDim       = glGetUniformLocation(program, "contourStripDim");
+    glassUniforms.cardRects             = glGetUniformLocation(program, "cardRects");
+    glassUniforms.cardRadii             = glGetUniformLocation(program, "cardRadii");
+    glassUniforms.cardCount             = glGetUniformLocation(program, "cardCount");
+    glassUniforms.cardLook              = glGetUniformLocation(program, "cardLook");
+    glassUniforms.frostRects            = glGetUniformLocation(program, "frostRects");
+    glassUniforms.frostRectCount        = glGetUniformLocation(program, "frostRectCount");
+    glassUniforms.frostDim              = glGetUniformLocation(program, "frostDim");
 
     return true;
 }
@@ -200,6 +209,32 @@ const SContourPrograms* CShaderManager::contourPrograms() {
     return nullptr;
 }
 
+const SChromeProgram* CShaderManager::chromeProgram() {
+    if (m_chromeCompiled)
+        return &m_chrome;
+    if (m_chromeFailed)
+        return nullptr;
+
+    if (!m_chrome.shader->createProgram(g_pHyprOpenGL->m_shaders->TEXVERTSRC, loadShaderSource("chromekey.frag"), true, true)) {
+        m_chromeFailed = true;
+        m_chrome.shader->destroy();
+        HyprlandAPI::addNotification(PHANDLE, std::format("[{}] The chrome glass shader failed to compile, those windows stay opaque", PLUGIN_NAME),
+                                     CHyprColor{1.0, 0.6, 0.2, 1.0}, 8000);
+        return nullptr;
+    }
+
+    const auto program     = m_chrome.shader->program();
+    m_chrome.padding       = glGetUniformLocation(program, "padding");
+    m_chrome.fullSize      = glGetUniformLocation(program, "fullSize");
+    m_chrome.radius        = glGetUniformLocation(program, "radius");
+    m_chrome.roundingPower = glGetUniformLocation(program, "roundingPower");
+    m_chrome.keepAlpha     = glGetUniformLocation(program, "keepAlpha");
+    m_chrome.alpha         = glGetUniformLocation(program, "alpha");
+    m_chrome.splitPx       = glGetUniformLocation(program, "splitPx");
+    m_chromeCompiled       = true;
+    return &m_chrome;
+}
+
 void CShaderManager::initializeIfNeeded() {
     if (m_initialized || m_compileFailed)
         return;
@@ -251,6 +286,11 @@ void CShaderManager::destroy() noexcept {
     m_contour         = {};
     m_contourCompiled = false;
     m_contourFailed   = false;
+    if (m_chromeCompiled)
+        m_chrome.shader->destroy();
+    m_chrome         = {};
+    m_chromeCompiled = false;
+    m_chromeFailed   = false;
     m_initialized   = false;
     m_compileFailed = false;
 }

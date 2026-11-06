@@ -16,6 +16,7 @@
 #include "PluginConfig.hpp"
 #include "RenderGuards.hpp"
 #include "GlassLight.hpp"
+#include "GlassChrome.hpp"
 
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
@@ -113,12 +114,21 @@ static void onNewWindow(PHLWINDOW window) {
     g_pGlobalState->decorations.emplace_back(decoration);
     decoration->m_self = decoration;
     HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(decoration));
+
+    // Idle unless the window is tagged hyprglass_chrome_<height>.
+    auto chrome = makeShared<CGlassChromeDecoration>(window);
+    g_pGlobalState->chromeDecorations.emplace_back(chrome);
+    HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(chrome));
 }
 
 static void onCloseWindow(PHLWINDOW window) {
     std::erase_if(g_pGlobalState->decorations, [&window](const auto& decoration) {
         auto* deco = decoration.get();
         return !deco || deco->getOwner() == window;
+    });
+    std::erase_if(g_pGlobalState->chromeDecorations, [&window](const auto& decoration) {
+        auto* deco = decoration.get();
+        return !deco || deco->owner() == window;
     });
 }
 
@@ -778,6 +788,13 @@ static void damageAllGlass() {
         if (auto* deco = decoration.get())
             deco->damageEntire();
     }
+    // The light and parallax reach traced layers too.
+    if (GlassLight::f(g_pGlobalState->config.lightLayers) > 0.001f) {
+        for (const auto& [raw, state] : g_pGlobalState->layerSurfaces) {
+            if (state && state->isContoured())
+                state->damagePanels();
+        }
+    }
 }
 
 // The glass window under the pointer: visible on screen, the focused one if
@@ -799,11 +816,17 @@ static PHLWINDOW glassWindowAt(const Vector2D& cursor) {
     return hit;
 }
 
+// How often the light redraws everything it touches while it moves.
+static std::chrono::milliseconds lightTickInterval() {
+    const float fps = std::clamp(GlassLight::f(g_pGlobalState->config.lightFps), 10.0f, 240.0f);
+    return std::chrono::milliseconds(static_cast<int>(1000.0f / fps));
+}
+
 static void armLightTimer() {
     auto& st = *g_pGlobalState;
     if (!st.lightFast && st.lightTimer) {
         st.lightFast = true;
-        st.lightTimer->updateTimeout(std::chrono::milliseconds(16));
+        st.lightTimer->updateTimeout(lightTickInterval());
     }
 }
 
@@ -889,7 +912,7 @@ static void lightTick(SP<CEventLoopTimer> self, void*) {
 
     const int oilMs = static_cast<int>(1000.0f / std::clamp(f(st.config.oilFps), 5.0f, 60.0f));
     st.lightFast = active;
-    self->updateTimeout(active ? milliseconds(16) : oil ? milliseconds(drifting ? std::min(33, oilMs) : oilMs)
+    self->updateTimeout(active ? lightTickInterval() : oil ? milliseconds(drifting ? std::min(33, oilMs) : oilMs)
                                                         : drifting ? milliseconds(33) : milliseconds(250));
 }
 
@@ -1154,6 +1177,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     // Outside a render the context pass is empty: defence in depth only.
     auto& pass = g_pHyprRenderer->context().m_pass;
     pass.removeAllOfType("CGlassPassElement");
+    pass.removeAllOfType("CGlassChromePassElement");
     pass.removeAllOfType("CGlassLayerPassElement");
     pass.removeAllOfType("CGlassLayerCompositeElement");
     pass.removeAllOfType("CGlassSubsurfacePassElement");
@@ -1168,6 +1192,12 @@ APICALL EXPORT void PLUGIN_EXIT() {
             HyprlandAPI::removeWindowDecoration(PHANDLE, deco);
     }
     g_pGlobalState->decorations.clear();
+
+    for (auto& decoration : g_pGlobalState->chromeDecorations) {
+        if (auto* deco = decoration.get())
+            HyprlandAPI::removeWindowDecoration(PHANDLE, deco);
+    }
+    g_pGlobalState->chromeDecorations.clear();
 
     if (g_pGlobalState->renderLayerHook) {
         HyprlandAPI::removeFunctionHook(PHANDLE, g_pGlobalState->renderLayerHook);

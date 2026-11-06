@@ -4,11 +4,13 @@
 #include "Diagnostics.hpp"
 #include "GlassRenderer.hpp"
 #include "GlassSnapshotElement.hpp"
+#include "Frost.hpp"
 #include "Globals.hpp"
 #include "LayerGeometry.hpp"
 #include "WorkspaceAnimation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <GLES3/gl32.h>
 #include <hyprland/src/managers/SessionLockManager.hpp>
@@ -266,6 +268,26 @@ void CGlassLayerSurface::damageSampleRegion() {
         g_pHyprRenderer->damageBox(box);
 }
 
+// Motion only shows on panels: strips stay still by design. A shell's input region is its panels,
+// its bar and its frame, so redraw the wide rectangles and leave the screen's edges out of it.
+void CGlassLayerSurface::damagePanels() {
+    const auto layerSurface = m_layerSurface.lock();
+    const auto wlSurface    = layerSurface ? layerSurface->wlSurface() : nullptr;
+    const auto resource     = wlSurface ? wlSurface->resource() : nullptr;
+    if (!resource)
+        return;
+
+    const auto position = layerSurface->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    for (const auto& rect : resource->m_current.input.getRects()) {
+        const double w = rect.x2 - rect.x1, h = rect.y2 - rect.y1;
+        if (std::min(w, h) < 120.0)
+            continue;
+        CBox box{position.x + rect.x1, position.y + rect.y1, w, h};
+        box.expand(8.0);
+        g_pHyprRenderer->damageBox(box);
+    }
+}
+
 void CGlassLayerSurface::markBackgroundDirty() {
     if (m_backgroundDirty)
         return;
@@ -450,6 +472,7 @@ void CGlassLayerSurface::sampleAndRedirect(Render::CRenderContext& ctx, PHLMONIT
         }
 
         GlassRenderer::blurBackground(ctx, m_sampleFramebuffer, blurRadius, blurIterations, source);
+        m_frost.sampleChanged();
 
         m_hasCachedSample      = true;
         m_cachedFromSnapshot   = xray;
@@ -605,6 +628,45 @@ bool CGlassLayerSurface::attachContour(Render::CRenderContext& ctx, PHLMONITOR m
     return true;
 }
 
+int CGlassLayerSurface::frostBoxes(const PHLMONITOR& monitor, const CBox& box, float* out, int maxRects) const {
+    std::array<float, 16 * 4> windows{};
+    const int                 windowCount = Frost::visibleWindowRects(monitor, box, windows.data(), 16);
+    if (windowCount == 0)
+        return 0;
+
+    const auto layerSurface = m_layerSurface.lock();
+    const auto wlSurface    = layerSurface ? layerSurface->wlSurface() : nullptr;
+    const auto resource     = wlSurface ? wlSurface->resource() : nullptr;
+    if (!resource)
+        return 0;
+
+    // A shell's input region is its panels. Any panel over a window frosts whole, not just
+    // where the window is: half a panel frosted reads as two materials with a seam between.
+    // The margin keeps the mask's soft edge outside the panel.
+    const float scale  = monitor->m_scale;
+    const float margin = 60.0f * scale;
+    int         count  = 0;
+    for (const auto& rect : resource->m_current.input.getRects()) {
+        if (count >= maxRects)
+            break;
+        const float x1 = rect.x1 * scale, y1 = rect.y1 * scale, x2 = rect.x2 * scale, y2 = rect.y2 * scale;
+        bool        overWindow = false;
+        for (int i = 0; i < windowCount && !overWindow; ++i) {
+            const float w = std::min(x2, windows[i * 4 + 2]) - std::max(x1, windows[i * 4 + 0]);
+            const float h = std::min(y2, windows[i * 4 + 3]) - std::max(y1, windows[i * 4 + 1]);
+            overWindow    = w > 1.0f && h > 1.0f;
+        }
+        if (!overWindow)
+            continue;
+        out[count * 4 + 0] = x1 - margin;
+        out[count * 4 + 1] = y1 - margin;
+        out[count * 4 + 2] = x2 + margin;
+        out[count * 4 + 3] = y2 + margin;
+        ++count;
+    }
+    return count;
+}
+
 void CGlassLayerSurface::compositeAndRestore(Render::CRenderContext& ctx, PHLMONITOR monitor, float alpha, EMaskSource maskSource) {
     // Restore the original currentFB before compositing
     if (m_savedCurrentFB) {
@@ -756,6 +818,66 @@ void CGlassLayerSurface::compositeAndRestore(Render::CRenderContext& ctx, PHLMON
         maskInfo.sampleUVScale  = Vector2D(sampleBox.w / box.w, sampleBox.h / box.h);
     }
 
+    // hg.cards(), for this namespace on this monitor.
+    std::array<float, 24 * 4> cardRects{};
+    std::array<float, 24>     cardRadii{};
+    if (contoured && monitor) {
+        const auto found = g_pGlobalState->layerCards.find(layerSurface->m_namespace + "|" + monitor->m_name);
+        if (found != g_pGlobalState->layerCards.end()) {
+            const float scale = monitor->m_scale;
+            for (const auto& card : found->second) {
+                if (maskInfo.cardCount >= 24)
+                    break;
+                const int i        = maskInfo.cardCount++;
+                cardRects[i * 4 + 0] = card[0] * scale;
+                cardRects[i * 4 + 1] = card[1] * scale;
+                cardRects[i * 4 + 2] = (card[0] + card[2]) * scale;
+                cardRects[i * 4 + 3] = (card[1] + card[3]) * scale;
+                cardRadii[i]         = card[4] * scale;
+            }
+            maskInfo.cardRects = cardRects.data();
+            maskInfo.cardRadii = cardRadii.data();
+        }
+    }
+
+    // Frost: traced layers only, and only over the windows behind them.
+    GlassRenderer::SFrostInput frostInput;
+    std::array<float, 16 * 4>  frostRects{};
+    if (contoured) {
+        const float frostSetting = resolvePresetFloat(resolveContext, &SPresetValues::frost, &SOverridableConfig::frost);
+        if (frostSetting > 0.0f || m_frost.active()) {
+            maskInfo.frostRectCount = frostSetting > 0.0f ? frostBoxes(monitor, box, frostRects.data(), 16) : 0;
+            maskInfo.frostRects     = frostRects.data();
+
+            if (m_frost.step(maskInfo.frostRectCount > 0 ? frostSetting : 0.0f, true, std::chrono::steady_clock::now()))
+                damageSampleRegion();
+
+            if (m_frost.amount() > Frost::MINIMUM_AMOUNT) {
+                const float blurStrength = resolvePresetFloat(resolveContext, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
+                const int   downscale    = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
+                // the copy is half the sample's size on top of the sample's own downscale
+                const float radius = resolvePresetFloat(resolveContext, &SPresetValues::frostBlur, &SOverridableConfig::frostBlur) * 12.0f / (2.0f * downscale);
+
+                if (m_frost.needsBuild(m_sampleFramebuffer, radius)) {
+                    float frostRadius     = radius;
+                    int   frostIterations = Frost::BLUR_ITERATIONS;
+                    if (const auto& cfg = g_pGlobalState->config; cfg.blurFold && **cfg.blurFold) {
+                        const GlassRenderer::SFoldedBlur folded = GlassRenderer::foldBlurPasses(frostRadius, frostIterations);
+                        frostRadius     = folded.radius;
+                        frostIterations = folded.iterations;
+                    }
+                    if (GlassRenderer::buildFrostCopy(ctx, m_sampleFramebuffer, m_frost.copy(), m_frost.temporary(), frostRadius, frostIterations, target))
+                        m_frost.built(radius);
+                }
+
+                if (!m_frost.needsBuild(m_sampleFramebuffer, radius))
+                    frostInput = {m_frost.copy(), m_frost.amount()};
+            } else {
+                m_frost.releaseCopy();
+            }
+        }
+    }
+
     // The glass shader composites both the glass effect and the surface content
     // in a single pass: glass behind, surface on top, using the temp FBO alpha.
     GlassRenderer::applyGlassEffect(ctx,
@@ -763,5 +885,5 @@ void CGlassLayerSurface::compositeAndRestore(Render::CRenderContext& ctx, PHLMON
                                      box, alpha,
                                      std::array<float, 4>{cornerRadius, cornerRadius, cornerRadius, cornerRadius},
                                      roundingPower, m_samplePaddingRatio, resolveContext,
-                                     &maskInfo);
+                                     &maskInfo, 0.0f, frostInput.copy ? &frostInput : nullptr);
 }

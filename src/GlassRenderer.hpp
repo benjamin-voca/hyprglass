@@ -14,6 +14,8 @@
 
 // Shared GL rendering pipeline used by both window decorations and layer surfaces.
 // Callers own their sample framebuffers; these functions operate on passed-in state.
+struct SChromeProgram;
+
 namespace GlassRenderer {
 
 inline constexpr int SAMPLE_PADDING_PX = 60;
@@ -130,6 +132,13 @@ struct SMaskInfo {
     Vector2D contourUVScale{1.0, 1.0}; // box UV -> field UV
     float    contourReferencePx = 0.0f; // edge_thickness is a fraction of this
     float    contourReachPx     = 0.0f; // where the field stops
+    // Traced layers frost only inside these boxes: x0, y0, x1, y1 in layer px.
+    const float* frostRects     = nullptr;
+    int          frostRectCount = 0;
+    // hg.cards(): x0, y0, x1, y1 and a radius per card, in layer px.
+    const float* cardRects = nullptr;
+    const float* cardRadii = nullptr;
+    int          cardCount = 0;
 };
 
 // Affine map from source-framebuffer pixels into the sample framebuffer.
@@ -145,6 +154,10 @@ struct SSampleMap {
 };
 
 [[nodiscard]] SSampleMap sampleMapFor(const CBox& box, int downscale);
+
+// Draws what the window has over its flat background on top of the glass (chromekey.frag).
+void drawChromeKey(Render::CRenderContext& ctx, const SChromeProgram& program, SP<Render::IFramebuffer> copy, SP<Render::IFramebuffer> target,
+                   const CBox& box, const Vector2D& paddingRatio, float radius, float roundingPower, float keepAlpha, float alpha, float splitPx);
 
 // GL name of a framebuffer, for passes that bind it directly.
 [[nodiscard]] GLuint framebufferId(const SP<Render::IFramebuffer>& framebuffer);

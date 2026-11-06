@@ -74,4 +74,34 @@ float coveredFraction(const PHLWINDOW& window, const PHLMONITOR& monitor, const 
     return static_cast<float>(std::clamp(coveredArea / glassArea, 0.0, 1.0));
 }
 
+int visibleWindowRects(const PHLMONITOR& monitor, const CBox& layerBox, float* out, int maxRects) {
+    if (!monitor || !out)
+        return 0;
+
+    int count = 0;
+    for (const auto& window : Desktop::viewState()->windows()) {
+        if (count >= maxRects)
+            break;
+        if (!window || !window->mapped() || window->isHidden() || window->presentation().alphaTotal() == 0.f)
+            continue;
+        if (!g_pHyprRenderer->shouldRenderWindow(window, monitor))
+            continue;
+
+        const auto box = WindowGeometry::computeWindowBox(window, monitor);
+        if (!box)
+            continue;
+
+        const CBox overlap = box->intersection(layerBox);
+        if (overlap.w <= 0.0 || overlap.h <= 0.0)
+            continue;
+
+        out[count * 4 + 0] = static_cast<float>(box->x - layerBox.x);
+        out[count * 4 + 1] = static_cast<float>(box->y - layerBox.y);
+        out[count * 4 + 2] = static_cast<float>(box->x + box->w - layerBox.x);
+        out[count * 4 + 3] = static_cast<float>(box->y + box->h - layerBox.y);
+        ++count;
+    }
+    return count;
+}
+
 } // namespace Frost

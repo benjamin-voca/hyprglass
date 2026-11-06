@@ -29,6 +29,8 @@ class CGlassDecoration : public IHyprWindowDecoration {
 
     [[nodiscard]] PHLWINDOW getOwner();
     void                    renderPass(Render::CRenderContext& ctx, PHLMONITOR monitor, const float& alpha, bool xray);
+    // Chrome glass: runs above the window's surface, below its popups (GlassChrome.cpp).
+    void                    renderChrome(Render::CRenderContext& ctx, PHLMONITOR monitor, int heightLogical, int splitLogical);
     void                    onFullscreenStateChanged();
 
     // Content below committed damage in our sample region — resample next frame.
@@ -120,6 +122,17 @@ class CGlassDecoration : public IHyprWindowDecoration {
     bool m_glassWasEnabled = false;
 
     float m_lastSelfSample = 0.0f;
+
+    // Chrome glass: what the glass draw of this frame used, so the top of the window can
+    // be drawn the same again, and a copy of what the window itself put there.
+    SP<Render::IFramebuffer> m_chromeCopy;
+    void                     detectChrome(const SP<Render::IFramebuffer>& source, const CBox& windowBox, float scale);
+    std::chrono::steady_clock::time_point m_chromeAutoAt{};
+    double                   m_chromeAutoWidth  = 0.0;
+    int                      m_chromeAutoHeight = 0;
+    int                      m_chromeAutoSplit  = 0;
+    uint64_t                 m_chromeReadySerial = 0;
+    float                    m_chromeAlpha = 1.0f, m_chromeRadius = 0.0f, m_chromePower = 2.0f, m_chromeFocus = 0.0f;
 
     // Liquid Touch: the simulation exists only while this window is stirred.
     UP<CLiquidSim> m_liquid;

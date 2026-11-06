@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Frost.hpp"
 #include "Contour.hpp"
 #include "GlassRenderer.hpp"
 #include "PluginConfig.hpp"
@@ -38,6 +39,10 @@ class CGlassLayerSurface {
     void compositeAndRestore(Render::CRenderContext& ctx, PHLMONITOR monitor, float alpha, EMaskSource maskSource);
 
     void damageIfMoved();
+    void damageSampleRegion();
+    void damagePanels();
+    [[nodiscard]] int frostBoxes(const PHLMONITOR& monitor, const CBox& box, float* out, int maxRects) const;
+    [[nodiscard]] bool isContoured() const { return m_contour.framebuffer() != nullptr; }
 
     // Content below committed damage in our sample region — resample next frame
     void markBackgroundDirty();
@@ -103,8 +108,6 @@ class CGlassLayerSurface {
     // GlassLayerPassElement.cpp).
     bool         m_redirectedThisFrame = false;
 
-    void damageSampleRegion();
-
     // The cached sample came from the x-ray snapshot: switching x-ray on or off
     // must not reuse a sample of the other.
     bool m_cachedFromSnapshot = false;
@@ -155,6 +158,7 @@ class CGlassLayerSurface {
 
     // mask_mode = contour: the traced outline, rebuilt when the content changes.
     Contour::CField m_contour;
+    Frost::CFrostState m_frost;
 
     // Brings the field up to date for this draw (a build when one is due and this frame redraws
     // the whole layer) and points maskInfo at it. False: draw with the layer's rectangle, as every

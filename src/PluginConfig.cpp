@@ -10,6 +10,8 @@
 #include <hyprland/src/config/values/ConfigValues.hpp>
 #include <hyprland/src/helpers/Color.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
 
 extern "C" {
 #include <lauxlib.h>
@@ -32,6 +34,7 @@ static void addConfigValue(HANDLE handle, const char* name, Default defaultValue
 static int handleLuaPreset(lua_State* L);
 static int handleLuaLayer(lua_State* L);
 static int handleLuaConfig(lua_State* L);
+static int handleLuaCards(lua_State* L);
 
 std::optional<ELayerMaskMode> parseLayerMaskMode(std::string_view value) {
     if (value == "auto")   return ELayerMaskMode::AUTO;
@@ -114,6 +117,15 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIQUID_GLINTS, Config::FLOAT{1.5f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIQUID_STEPS, Config::FLOAT{20.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIQUID_CELL, Config::FLOAT{6.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_LAYERS, Config::FLOAT{0.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_THIN_PX, Config::FLOAT{0.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_OPACITY, Config::FLOAT{0.25f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_FROST_DIM, Config::FLOAT{0.1f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_STRIP_DIM, Config::FLOAT{0.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_FPS, Config::FLOAT{60.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_BEND, Config::FLOAT{8.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_CHROMA, Config::FLOAT{0.4f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_LIGHT, Config::FLOAT{0.3f});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_THEME, Config::STRING{"dark"});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_PRESET, Config::STRING{"default"});
 
@@ -267,6 +279,7 @@ void registerConfig(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprglass", "preset", handleLuaPreset);
     HyprlandAPI::addLuaFunction(handle, "hyprglass", "layer", handleLuaLayer);
     HyprlandAPI::addLuaFunction(handle, "hyprglass", "config", handleLuaConfig);
+    HyprlandAPI::addLuaFunction(handle, "hyprglass", "cards", handleLuaCards);
 }
 
 // ── Config pointer initialization ────────────────────────────────────────────
@@ -397,6 +410,15 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.liquidGlints = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIQUID_GLINTS);
     config.liquidSteps = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIQUID_STEPS);
     config.liquidCell = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIQUID_CELL);
+    config.lightLayers   = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIGHT_LAYERS);
+    config.contourThinPx = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_THIN_PX);
+    config.chromeOpacity = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_OPACITY);
+    config.contourFrostDim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_FROST_DIM);
+    config.contourStripDim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_STRIP_DIM);
+    config.lightFps = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIGHT_FPS);
+    config.cardBend = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_BEND);
+    config.cardChroma = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_CHROMA);
+    config.cardLight = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_LIGHT);
     config.defaultTheme  = getStringPtr(handle, ConfigKeys::DEFAULT_THEME);
     config.defaultPreset = getStringPtr(handle, ConfigKeys::DEFAULT_PRESET);
 
@@ -903,6 +925,42 @@ static std::optional<SLayerShape> readLuaLayerShape(lua_State* L, int tableIdx) 
 
 // What hyprglass.layer takes in its table; anything else is reported.
 static constexpr std::array<std::string_view, 7> LAYER_SETTINGS = {"exclude", "preset", "mask_threshold", "mask_feather", "live_resample", "mask_mode", "shape"};
+
+// Rounded rects a shell draws inside its traced layer, in logical px. Each gets its own bent rim.
+// A shell keeps these current itself. An unchanged list costs nothing, so it may resend freely.
+static int handleLuaCards(lua_State* L) {
+    if (!g_pGlobalState || lua_gettop(L) < 3 || !lua_isstring(L, 1) || !lua_isstring(L, 2) || !lua_istable(L, 3))
+        return 0;
+
+    std::vector<std::array<float, 5>> cards;
+    const int count = static_cast<int>(lua_rawlen(L, 3));
+    for (int i = 1; i <= count && cards.size() < ConfigKeys::MAX_LAYER_CARDS; ++i) {
+        lua_rawgeti(L, 3, i);
+        if (lua_istable(L, -1)) {
+            std::array<float, 5> card{};
+            for (int field = 0; field < 5; ++field) {
+                lua_rawgeti(L, -1, field + 1);
+                card[field] = lua_isnumber(L, -1) ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+            }
+            cards.push_back(card);
+        }
+        lua_pop(L, 1);
+    }
+
+    const std::string monitorName = lua_tostring(L, 2);
+    const std::string key         = std::string(lua_tostring(L, 1)) + "|" + monitorName;
+    auto&             slot        = g_pGlobalState->layerCards[key];
+    if (slot == cards)
+        return 0;
+    slot = std::move(cards);
+
+    for (const auto& monitor : State::monitorState()->monitors()) {
+        if (monitor && monitor->m_name == monitorName)
+            g_pHyprRenderer->damageMonitor(monitor);
+    }
+    return 0;
+}
 
 static int handleLuaLayer(lua_State* L) {
     s_hyprglassCalledThisReload = true;

@@ -1,4 +1,5 @@
 #include "GlassLight.hpp"
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include "GlassRenderer.hpp"
 #include "BuiltInPresets.hpp"
 #include "Diagnostics.hpp"
@@ -484,10 +485,10 @@ void applyGlassEffect(Render::CRenderContext& ctx,
         std::min(resolvePresetFloat(resolveContext, &SPresetValues::edgeHeight, &SOverridableConfig::edgeHeight), EDGE_HEIGHT_MAX);
     // windows only: a masked draw is a layer or an item
     const float focusLightValue = !mask && focusLight > 0.0f ? std::min(focusLight, 1.0f) : 0.0f;
-    // windows only, like the light
-    const bool  frosted         = !mask && frost && frost->copy && frost->copy->getTexture() && frost->amount > Frost::MINIMUM_AMOUNT;
-    // layers only too, and only when the layer has a field to draw
+    // layers only, and only when the layer has a field to draw
     const bool  wantsContour    = mask && mask->contourTextureId != 0 && mask->contourReferencePx > 0.0f;
+    // windows, and traced layers, which frost by the window boxes behind them
+    const bool  frosted         = (!mask || wantsContour) && frost && frost->copy && frost->copy->getTexture() && frost->amount > Frost::MINIMUM_AMOUNT;
     const auto  features        = glassFeaturesFor(edgeHeightValue, focusLightValue, frosted, wantsContour);
 
     // Before any GL binding: a variant's first use compiles it, which rebinds the VAO and array buffer.
@@ -629,6 +630,26 @@ void applyGlassEffect(Render::CRenderContext& ctx,
         glUniform2f(uniforms.contourUVScale, static_cast<float>(mask->contourUVScale.x), static_cast<float>(mask->contourUVScale.y));
         glUniform1f(uniforms.contourReferencePx, mask->contourReferencePx);
         glUniform1f(uniforms.contourReachPx, mask->contourReachPx);
+        const auto  thinMonitor = ctx.m_data.pMonitor.lock();
+        const float thinScale   = thinMonitor ? static_cast<float>(thinMonitor->m_scale) : 1.0f;
+        const auto& thinConfig  = g_pGlobalState->config;
+        glUniform1f(uniforms.contourThinPx, thinConfig.contourThinPx ? static_cast<float>(**thinConfig.contourThinPx) * thinScale : 0.0f);
+        glUniform1f(uniforms.contourStripDim, thinConfig.contourStripDim ? static_cast<float>(**thinConfig.contourStripDim) : 0.0f);
+        const int cards = mask->cardRects && mask->cardRadii ? std::min(mask->cardCount, 24) : 0;
+        glUniform1i(uniforms.cardCount, cards);
+        if (cards > 0) {
+            glUniform4fv(uniforms.cardRects, cards, mask->cardRects);
+            glUniform1fv(uniforms.cardRadii, cards, mask->cardRadii);
+            glUniform3f(uniforms.cardLook, thinConfig.cardBend ? static_cast<float>(**thinConfig.cardBend) * thinScale : 0.0f,
+                        thinConfig.cardChroma ? static_cast<float>(**thinConfig.cardChroma) : 0.0f,
+                        thinConfig.cardLight ? static_cast<float>(**thinConfig.cardLight) : 0.0f);
+        }
+        if (features & GLASS_FEATURE_FROST) {
+            glUniform1i(uniforms.frostRectCount, mask->frostRects ? std::min(mask->frostRectCount, 16) : 0);
+            if (mask->frostRects && mask->frostRectCount > 0)
+                glUniform4fv(uniforms.frostRects, std::min(mask->frostRectCount, 16), mask->frostRects);
+            glUniform1f(uniforms.frostDim, thinConfig.contourFrostDim ? static_cast<float>(**thinConfig.contourFrostDim) : 0.1f);
+        }
     }
 
     uploadThemeUniforms(resolveContext, program);
@@ -657,15 +678,28 @@ void applyGlassEffect(Render::CRenderContext& ctx,
     glUniform1f(uniforms.bevelColorAlpha,
         static_cast<float>(bevelColorValue & 0xFF) / 255.0f);
 
-    {   // glass light: layers (mask != nullptr) never get it
+    {   // glass light: windows and, when light_layers is set, traced layers
         using GlassLight::f;
         const auto& c   = g_pGlobalState->config;
         const auto& lf  = g_pGlobalState->lightFrame;
         const bool  win = !mask;
         const auto  mon = ctx.m_data.pMonitor.lock();
         const float sc  = mon ? static_cast<float>(mon->m_scale) : 1.0f;
-        glUniform2f(uniforms.lightPos, static_cast<float>(lf.lightPos.x), static_cast<float>(lf.lightPos.y));
-        const float share = win ? lf.share : 0.0f;
+        const float layerShare = contoured && mon ? f(c.lightLayers) : 0.0f;
+        Vector2D    lightPosPx = lf.lightPos;
+        Vector2D    parallaxPx = win ? lf.parallax : Vector2D{};
+        if (layerShare > 0.001f) {
+            // A traced layer spans the monitor, so it reads the light from the monitor's middle.
+            const Vector2D cursor = GlassLight::lightCursor(g_pInputManager->getMouseCoordsInternal());
+            lightPosPx = (GlassLight::lightPositionGlobal(cursor) - mon->m_position) * sc;
+            if (GlassLight::parallaxOn()) {
+                const auto   rel = (cursor - (mon->m_position + mon->m_size * 0.5)) / std::max(mon->m_size.x, mon->m_size.y);
+                const double px  = f(c.parallaxStrength) * sc * layerShare;
+                parallaxPx = {-std::clamp(rel.x, -1.0, 1.0) * px, -std::clamp(rel.y, -1.0, 1.0) * px};
+            }
+        }
+        glUniform2f(uniforms.lightPos, static_cast<float>(lightPosPx.x), static_cast<float>(lightPosPx.y));
+        const float share = win ? lf.share : layerShare;
         glUniform4f(uniforms.lightA, f(c.lightStrength) * share, std::max(0.5f, f(c.lightSharpness)), f(c.lightWidth) * sc, f(c.lightFar));
         glUniform4f(uniforms.lightB, f(c.lightBend) * share, win ? lf.glow : -1.0f, f(c.glowStrength), f(c.glowFlex));
         const int64_t rgb = c.lightColor ? **c.lightColor : 0xFFFFFF;
@@ -678,7 +712,7 @@ void applyGlassEffect(Render::CRenderContext& ctx,
         const double oilT = std::fmod(GlassLight::nowSeconds() * f(c.oilSpeed), 10000.0);
         glUniform4f(uniforms.oilA, win ? f(c.oilAmount) * lf.oilShare : 0.0f, static_cast<float>(oilT), f(c.oilScale) * sc, f(c.oilColor));
         glUniform4f(uniforms.oilB, f(c.oilWarp) * 8.0f * sc, 0.0f, 0.0f, 0.0f);
-        glUniform3f(uniforms.parallax, win ? static_cast<float>(lf.parallax.x) : 0.0f, win ? static_cast<float>(lf.parallax.y) : 0.0f, f(c.parallaxDepth));
+        glUniform3f(uniforms.parallax, static_cast<float>(parallaxPx.x), static_cast<float>(parallaxPx.y), f(c.parallaxDepth));
 
         // liquid touch: this window's simulation on units 2-4 (0 = sample, 1 = layer mask)
         const bool liquid = win && lf.liquidOn;
@@ -748,6 +782,37 @@ void applyGlassEffect(Render::CRenderContext& ctx,
     // Only finalDamage is copied to the screen, and elementDamage (which finalDamage is a
     // subset of) already covers every pixel we're visible at, so scissoring to the damage
     // clips no pixel that would otherwise reach the screen.
+    CBox damageExtents = ctx.m_data.damage.copy().intersect(box).getExtents();
+    g_pHyprOpenGL->scissor(ctx, damageExtents.w > 0 && damageExtents.h > 0 ? damageExtents : box, ctx.m_data.transformDamage);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    g_pHyprOpenGL->scissor(ctx, nullptr);
+}
+
+void drawChromeKey(Render::CRenderContext& ctx, const SChromeProgram& program, SP<Render::IFramebuffer> copy, SP<Render::IFramebuffer> target,
+                   const CBox& box, const Vector2D& paddingRatio, float radius, float roundingPower, float keepAlpha, float alpha, float splitPx) {
+    if (!copy || !target || !copy->getTexture())
+        return;
+
+    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(ctx, box);
+    glMatrix.transpose();
+
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(target));
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
+    copy->getTexture()->bind();
+
+    auto shader = g_pHyprOpenGL->useShader(program.shader);
+    shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, glMatrix.getMatrix());
+    shader->setUniformInt(SHADER_TEX, 0);
+    glUniform2f(program.padding, static_cast<float>(paddingRatio.x), static_cast<float>(paddingRatio.y));
+    glUniform2f(program.fullSize, static_cast<float>(box.w), static_cast<float>(box.h));
+    glUniform1f(program.radius, radius);
+    glUniform1f(program.roundingPower, std::max(roundingPower, 1.0f));
+    glUniform1f(program.keepAlpha, std::clamp(keepAlpha, 0.0f, 1.0f));
+    glUniform1f(program.alpha, std::clamp(alpha, 0.0f, 1.0f));
+    glUniform1f(program.splitPx, splitPx);
+
+    glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+
     CBox damageExtents = ctx.m_data.damage.copy().intersect(box).getExtents();
     g_pHyprOpenGL->scissor(ctx, damageExtents.w > 0 && damageExtents.h > 0 ? damageExtents : box, ctx.m_data.transformDamage);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);

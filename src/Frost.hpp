@@ -55,6 +55,10 @@ static_assert(amountForCoverage(0.5f * (COVERAGE_DEAD_ZONE + COVERAGE_FULL)) > 0
 // follows Hyprland's tiled, floating, pinned layering.
 [[nodiscard]] float coveredFraction(const PHLWINDOW& window, const PHLMONITOR& monitor, const CBox& glassBox);
 
+// The boxes of the windows drawn on `monitor`, as x0, y0, x1, y1 relative to `layerBox`,
+// for a layer that spans them. Returns how many of `maxRects` it filled.
+[[nodiscard]] int visibleWindowRects(const PHLMONITOR& monitor, const CBox& layerBox, float* out, int maxRects);
+
 // One window's frost: the eased amount and the frosted copy of its sample.
 class CFrostState {
   public:

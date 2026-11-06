@@ -734,6 +734,12 @@ void CGlassDecoration::renderPass(Render::CRenderContext& ctx, PHLMONITOR monito
                                      roundingPower, m_samplePaddingRatio, resolveContext, nullptr, focusLight,
                                      frostInput.copy ? &frostInput : nullptr);
 
+    m_chromeReadySerial = g_pGlobalState->frameSerial;
+    m_chromeAlpha       = glassAlpha;
+    m_chromeRadius      = cornerRadius;
+    m_chromePower       = roundingPower;
+    m_chromeFocus       = focusLight;
+
     g_pGlobalState->lightFrame.liquidOn = false;
 }
 

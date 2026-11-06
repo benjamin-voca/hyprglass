@@ -19,11 +19,15 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <array>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 class CGlassDecoration;
 class CGlassSubsurfaceState;
+
+class CGlassChromeDecoration;
 
 struct SGlobalState {
     // Event listeners are owned here so PLUGIN_EXIT unregisters them. Static
@@ -33,6 +37,9 @@ struct SGlobalState {
     // These WPs wrap the UP<IHyprWindowDecoration> Hyprland owns: dereference with
     // .get() only, lock() asserts on a unique-owned pointer and terminates.
     std::vector<WP<CGlassDecoration>> decorations;
+    // hg.cards(): "namespace|monitor" -> x, y, w, h, radius in logical px
+    std::unordered_map<std::string, std::vector<std::array<float, 5>>> layerCards;
+    std::vector<WP<CGlassChromeDecoration>> chromeDecorations;
     CShaderManager                    shaderManager;
     SPluginConfig                     config;
 

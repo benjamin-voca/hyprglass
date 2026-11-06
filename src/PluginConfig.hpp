@@ -134,6 +134,22 @@ inline constexpr auto LIQUID_GLINTS        = "plugin:hyprglass:liquid_glints";  
 inline constexpr auto LIQUID_STEPS         = "plugin:hyprglass:liquid_steps";          // pressure solver steps per frame (cost)
 inline constexpr auto LIQUID_CELL          = "plugin:hyprglass:liquid_cell";           // simulation cell size, px (cost)
 
+// Shell glass: traced (mask_mode = contour) layers take the glass light and parallax,
+// and a strip too thin to hold a lens stays flat instead of smearing.
+inline constexpr auto LIGHT_LAYERS    = "plugin:hyprglass:light_layers";     // traced layers' share of the light and parallax (0 = none)
+inline constexpr auto CONTOUR_THIN_PX = "plugin:hyprglass:contour_thin_px";  // strips thinner than this get no edge effects, logical px (0 = off)
+// Chrome glass: a window tagged hyprglass_chrome_<height> gets its top <height> logical px
+// keyed to glass, with its background colour lifted out and its content kept.
+inline constexpr auto CONTOUR_FROST_DIM = "plugin:hyprglass:contour_frost_dim"; // traced layers: how far a bright window behind frosted glass is darkened
+inline constexpr auto CONTOUR_STRIP_DIM = "plugin:hyprglass:contour_strip_dim"; // traced layers: how far thin strips darken what is bright behind them
+inline constexpr auto LIGHT_FPS       = "plugin:hyprglass:light_fps";        // redraws per second while the cursor moves the light
+inline constexpr auto CARD_BEND       = "plugin:hyprglass:card_bend";        // hg.cards(): how far a card's rim bends the view, px
+inline constexpr auto CARD_CHROMA     = "plugin:hyprglass:card_chroma";      // hg.cards(): rainbow at that bend
+inline constexpr auto CARD_LIGHT      = "plugin:hyprglass:card_light";       // hg.cards(): the rim's highlight
+inline constexpr auto CHROME_OPACITY  = "plugin:hyprglass:chrome_opacity";   // how much of the keyed background stays (0 = pure glass)
+
+inline constexpr size_t MAX_LAYER_CARDS = 24;
+
 // Overridable — global level
 inline constexpr auto BLUR_STRENGTH        = "plugin:hyprglass:blur_strength";
 inline constexpr auto BLUR_ITERATIONS      = "plugin:hyprglass:blur_iterations";
@@ -463,6 +479,16 @@ struct SPluginConfig {
     Config::FLOAT* const* liquidGlints = nullptr;
     Config::FLOAT* const* liquidSteps = nullptr;
     Config::FLOAT* const* liquidCell = nullptr;
+
+    Config::FLOAT* const* lightLayers   = nullptr;
+    Config::FLOAT* const* contourThinPx = nullptr;
+    Config::FLOAT* const* chromeOpacity = nullptr;
+    Config::FLOAT* const* contourFrostDim = nullptr;
+    Config::FLOAT* const* contourStripDim = nullptr;
+    Config::FLOAT* const* lightFps = nullptr;
+    Config::FLOAT* const* cardBend = nullptr;
+    Config::FLOAT* const* cardChroma = nullptr;
+    Config::FLOAT* const* cardLight = nullptr;
     // Hyprland's render:xp_mode: no wallpaper or bottom layers are drawn, so
     // there is nothing for x-ray to show.
     BoolConfigPtr           xpMode;
