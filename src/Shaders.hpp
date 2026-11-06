@@ -189,6 +189,10 @@ uniform vec4  cardRects[24];      // hg.cards(), framebuffer px within the layer
 uniform float cardRadii[24];
 uniform int   cardCount;
 uniform vec3  cardLook;           // bend px, chroma, light
+uniform vec2  cardDepth;          // sheen across a card, shadow on the sheet around it
+const float CARD_SHADOW_DROP_PX = 3.0;  // logical px: the shadow falls this far below a card ...
+const float CARD_SHADOW_SOFT_PX = 14.0; // ... and blurs this far either side of its edge
+const float CARD_ECHO = 0.35;           // the light's echo on a card's far edge, as it goes through the glass
 #endif
 
 in vec2 v_texcoord;
@@ -840,31 +844,41 @@ void main() {
     vec2 uvB = uv + offsetB + domeUV + parallaxUV + oilUV + liqUV + liqSpread * 0.5;
 
 #ifdef HYPRGLASS_FEATURE_CONTOUR
-    // CARDS: rounded rects the shell draws inside the sheet (hg.cards) bend at their own rim,
-    // as small pieces of the same glass. Exact and cheap, as they are analytic, not traced.
+    // CARDS: rounded rects the shell draws inside the sheet (hg.cards) are small pieces of the same
+    // glass: they bend at their own rim, catch the light and shade the sheet around them.
+    // Exact and cheap, as they are analytic, not traced.
     float cardRim = 0.0;
+    float cardDepthPx = 0.0;  // how far inside its card this pixel is
+    float cardCover = 0.0;    // inside any card, antialiased
+    float cardShade = 0.0;    // under the shadow of one
     vec2  cardNormal = vec2(0.0);
+    vec2  cardCentre = vec2(0.0);
+    vec2  cardAcross = vec2(0.0);  // position in the card, -1 to 1 each way
     bool  cardBends = false;
     for (int i = 0; i < cardCount; i++) {
         vec2 centre = 0.5 * (cardRects[i].xy + cardRects[i].zw);
         vec2 half_  = 0.5 * (cardRects[i].zw - cardRects[i].xy);
         vec2 local  = uv * fullSize - centre;
-        if (abs(local.x) > half_.x || abs(local.y) > half_.y)
-            continue;
         float r = min(cardRadii[i], min(half_.x, half_.y));
         vec2  q = abs(local) - half_ + r;
         float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-        if (d > 0.0)
+        vec2  qShadow = abs(local - vec2(0.0, CARD_SHADOW_DROP_PX * monitorScale)) - half_ + r;
+        float dShadow = length(max(qShadow, 0.0)) + min(max(qShadow.x, qShadow.y), 0.0) - r;
+        cardShade = max(cardShade, 1.0 - smoothstep(-CARD_SHADOW_SOFT_PX * monitorScale, CARD_SHADOW_SOFT_PX * monitorScale, dShadow));
+        cardCover = max(cardCover, 1.0 - smoothstep(-0.75, 0.75, d));
+        if (d > 0.0 || cardRim > 0.0)
             continue;
         vec2 n = q.x > 0.0 && q.y > 0.0 ? normalize(q) : (q.x > q.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
         cardNormal = n * sign(local);
-        cardRim    = exp(d / 1.6);
+        cardRim    = exp(d / (1.6 * monitorScale));
+        cardDepthPx = -d;
+        cardCentre = centre;
+        cardAcross = local / half_;
         vec2 bend  = -cardNormal * exp(d / 9.0) * cardLook.x * invFullSize;
         uvR += bend * (1.0 - cardLook.y);
         uvG += bend;
         uvB += bend * (1.0 + cardLook.y);
         cardBends = cardLook.x > 0.001;
-        break;
     }
 #endif
 
@@ -1053,12 +1067,26 @@ void main() {
     color += lightColor * lightAmt * 0.55 + vec3(1.0, 0.99, 0.97) * glowAmt * 0.35;
 
 #ifdef HYPRGLASS_FEATURE_CONTOUR
+    // Only the sheet between cards catches their shadow.
+    color *= 1.0 - cardDepth.y * cardShade * (1.0 - cardCover);
     if (cardRim > 0.0) {
-        // Same light as the outer rim, so a card's highlight moves with it.
-        vec2  toLight = lightPos - (boxPos + 0.5 * fullSize);
-        vec2  dir     = length(toLight) > 1.0 ? normalize(toLight) : vec2(0.0, -1.0);
-        float facing  = clamp(dot(cardNormal, dir) * 0.5 + 0.5, 0.0, 1.0);
-        color += vec3(1.0, 0.99, 0.97) * cardRim * cardLook.z * (0.25 + 0.75 * facing * facing);
+        // The outer rim's light, from where this card sits, so each one has its own lit side.
+        vec2  toLight = lightPos - (boxPos + cardCentre);
+        float height  = LAYER_LIGHT_HEIGHT * monitorScale;
+        vec2  dir     = toLight / sqrt(dot(toLight, toLight) + height * height);
+        float facing  = dot(cardNormal, dir);
+        float lit     = max(facing, 0.0);
+        float away    = max(-facing, 0.0);
+
+        // A bright line on the lit edge, its echo on the far one, and next to nothing on the sides.
+        float line = cardRim * (lit * lit + CARD_ECHO * away * away + 0.08);
+        float glow = exp(-cardDepthPx / (9.0 * monitorScale)) * lit * lit * 0.2;
+        color += vec3(1.0, 0.99, 0.97) * cardLook.z * (line + glow);
+
+        // The sheen falls from the lit side across the card, and the far edge sits in its own shade.
+        float across = clamp(dot(cardAcross, dir) * 0.5 + 0.5, 0.0, 1.0);
+        color += vec3(1.0, 0.99, 0.97) * cardDepth.x * across * across;
+        color *= 1.0 - cardDepth.y * 0.5 * away * exp(-cardDepthPx / (10.0 * monitorScale));
     }
 #endif
 

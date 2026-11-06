@@ -672,6 +672,8 @@ void applyGlassEffect(Render::CRenderContext& ctx,
             glUniform3f(uniforms.cardLook, thinConfig.cardBend ? static_cast<float>(**thinConfig.cardBend) * thinScale : 0.0f,
                         thinConfig.cardChroma ? static_cast<float>(**thinConfig.cardChroma) : 0.0f,
                         thinConfig.cardLight ? static_cast<float>(**thinConfig.cardLight) : 0.0f);
+            glUniform2f(uniforms.cardDepth, thinConfig.cardSheen ? static_cast<float>(**thinConfig.cardSheen) : 0.0f,
+                        thinConfig.cardShadow ? static_cast<float>(**thinConfig.cardShadow) : 0.0f);
         }
         if (features & GLASS_FEATURE_FROST) {
             glUniform1i(uniforms.frostRectCount, mask->frostRects ? std::min(mask->frostRectCount, 16) : 0);

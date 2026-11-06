@@ -128,6 +128,8 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_BEND, Config::FLOAT{8.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_CHROMA, Config::FLOAT{0.4f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_LIGHT, Config::FLOAT{0.3f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_SHEEN, Config::FLOAT{0.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_SHADOW, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_THEME, Config::STRING{"dark"});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_PRESET, Config::STRING{"default"});
 
@@ -423,6 +425,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.cardBend = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_BEND);
     config.cardChroma = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_CHROMA);
     config.cardLight = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_LIGHT);
+    config.cardSheen = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_SHEEN);
+    config.cardShadow = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_SHADOW);
     config.defaultTheme  = getStringPtr(handle, ConfigKeys::DEFAULT_THEME);
     config.defaultPreset = getStringPtr(handle, ConfigKeys::DEFAULT_PRESET);
 

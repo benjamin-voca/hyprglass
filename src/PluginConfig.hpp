@@ -148,6 +148,8 @@ inline constexpr auto LIGHT_FPS       = "plugin:hyprglass:light_fps";        // 
 inline constexpr auto CARD_BEND       = "plugin:hyprglass:card_bend";        // hg.cards(): how far a card's rim bends the view, px
 inline constexpr auto CARD_CHROMA     = "plugin:hyprglass:card_chroma";      // hg.cards(): rainbow at that bend
 inline constexpr auto CARD_LIGHT      = "plugin:hyprglass:card_light";       // hg.cards(): the rim's highlight
+inline constexpr auto CARD_SHEEN      = "plugin:hyprglass:card_sheen";       // hg.cards(): light falling across a card from its lit side
+inline constexpr auto CARD_SHADOW     = "plugin:hyprglass:card_shadow";      // hg.cards(): how far the sheet darkens under a card
 inline constexpr auto CHROME_OPACITY  = "plugin:hyprglass:chrome_opacity";   // how much of the keyed background stays (0 = pure glass)
 
 inline constexpr size_t MAX_LAYER_CARDS = 24;
@@ -493,6 +495,8 @@ struct SPluginConfig {
     Config::FLOAT* const* cardBend = nullptr;
     Config::FLOAT* const* cardChroma = nullptr;
     Config::FLOAT* const* cardLight = nullptr;
+    Config::FLOAT* const* cardSheen = nullptr;
+    Config::FLOAT* const* cardShadow = nullptr;
     // Hyprland's render:xp_mode: no wallpaper or bottom layers are drawn, so
     // there is nothing for x-ray to show.
     BoolConfigPtr           xpMode;
