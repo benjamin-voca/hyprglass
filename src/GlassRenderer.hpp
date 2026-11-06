@@ -146,6 +146,9 @@ struct SSampleMap {
 
 [[nodiscard]] SSampleMap sampleMapFor(const CBox& box, int downscale);
 
+// GL name of a framebuffer, for passes that bind it directly.
+[[nodiscard]] GLuint framebufferId(const SP<Render::IFramebuffer>& framebuffer);
+
 // True when every pixel of `box`, clipped to the framebuffer, lies inside `damage`: the
 // frame redraws all of it. The only coverage predicate; sampleRegionCovered() asks it for
 // the sample's source rectangle. `box` and `damage` are both in render space, which is the

@@ -1,3 +1,4 @@
+#include "GlassLight.hpp"
 #include "GlassRenderer.hpp"
 #include "BuiltInPresets.hpp"
 #include "Diagnostics.hpp"
@@ -21,6 +22,10 @@ namespace GlassRenderer {
 
 static GLuint fbId(const SP<Render::IFramebuffer>& framebuffer) {
     return dynamic_cast<Render::GL::CGLFramebuffer*>(framebuffer.get())->getFBID();
+}
+
+GLuint framebufferId(const SP<Render::IFramebuffer>& framebuffer) {
+    return fbId(framebuffer);
 }
 
 static void uploadThemeUniforms(const SResolveContext& ctx, const SGlassProgram& program) {
@@ -456,6 +461,10 @@ static GlassFeatureMask glassFeaturesFor(float edgeHeight, float focusLight, boo
 
 static constexpr int FROST_TEXTURE_UNIT   = 2; // 0 is the sample, 1 the layer surface mask
 static constexpr int CONTOUR_TEXTURE_UNIT = 3; // layers only, so never at the same time as frost
+// Liquid Touch (windows only): its own units, clear of frost, which a window can have at the same time
+static constexpr int LIQUID_DYE_UNIT  = 4;
+static constexpr int LIQUID_VEL_UNIT  = 5;
+static constexpr int LIQUID_DISP_UNIT = 6;
 
 void applyGlassEffect(Render::CRenderContext& ctx,
                        SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
@@ -647,6 +656,49 @@ void applyGlassEffect(Render::CRenderContext& ctx,
         static_cast<float>((bevelColorValue >> 8) & 0xFF) / 255.0f);
     glUniform1f(uniforms.bevelColorAlpha,
         static_cast<float>(bevelColorValue & 0xFF) / 255.0f);
+
+    {   // glass light: layers (mask != nullptr) never get it
+        using GlassLight::f;
+        const auto& c   = g_pGlobalState->config;
+        const auto& lf  = g_pGlobalState->lightFrame;
+        const bool  win = !mask;
+        const auto  mon = ctx.m_data.pMonitor.lock();
+        const float sc  = mon ? static_cast<float>(mon->m_scale) : 1.0f;
+        glUniform2f(uniforms.lightPos, static_cast<float>(lf.lightPos.x), static_cast<float>(lf.lightPos.y));
+        const float share = win ? lf.share : 0.0f;
+        glUniform4f(uniforms.lightA, f(c.lightStrength) * share, std::max(0.5f, f(c.lightSharpness)), f(c.lightWidth) * sc, f(c.lightFar));
+        glUniform4f(uniforms.lightB, f(c.lightBend) * share, win ? lf.glow : -1.0f, f(c.glowStrength), f(c.glowFlex));
+        const int64_t rgb = c.lightColor ? **c.lightColor : 0xFFFFFF;
+        glUniform3f(uniforms.lightColor, ((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f);
+        glUniform2f(uniforms.glowPoint, static_cast<float>(lf.glowLocal.x), static_cast<float>(lf.glowLocal.y));
+        const float reach = f(c.glowSpread) * static_cast<float>(std::max(box.width, box.height));
+        glUniform2f(uniforms.glowC, reach, f(c.glowRing) * sc);
+        glUniform1f(uniforms.materialize, win ? lf.materialize : 1.0f);
+        glUniform2f(uniforms.boxPos, static_cast<float>(box.x), static_cast<float>(box.y));
+        const double oilT = std::fmod(GlassLight::nowSeconds() * f(c.oilSpeed), 10000.0);
+        glUniform4f(uniforms.oilA, win ? f(c.oilAmount) * lf.oilShare : 0.0f, static_cast<float>(oilT), f(c.oilScale) * sc, f(c.oilColor));
+        glUniform4f(uniforms.oilB, f(c.oilWarp) * 8.0f * sc, 0.0f, 0.0f, 0.0f);
+        glUniform3f(uniforms.parallax, win ? static_cast<float>(lf.parallax.x) : 0.0f, win ? static_cast<float>(lf.parallax.y) : 0.0f, f(c.parallaxDepth));
+
+        // liquid touch: this window's simulation on units 2-4 (0 = sample, 1 = layer mask)
+        const bool liquid = win && lf.liquidOn;
+        glUniform1i(uniforms.liqOn, liquid ? 1 : 0);
+        glUniform1i(uniforms.liqDye, LIQUID_DYE_UNIT);
+        glUniform1i(uniforms.liqVel, LIQUID_VEL_UNIT);
+        glUniform1i(uniforms.liqDisp, LIQUID_DISP_UNIT);
+        if (liquid) {
+            glActiveTexture(GL_TEXTURE0 + LIQUID_DYE_UNIT);
+            glBindTexture(GL_TEXTURE_2D, lf.liquidDye);
+            glActiveTexture(GL_TEXTURE0 + LIQUID_VEL_UNIT);
+            glBindTexture(GL_TEXTURE_2D, lf.liquidVel);
+            glActiveTexture(GL_TEXTURE0 + LIQUID_DISP_UNIT);
+            glBindTexture(GL_TEXTURE_2D, lf.liquidDisp);
+            glActiveTexture(GL_TEXTURE0);
+            glUniform2f(uniforms.liqTexel, static_cast<float>(lf.liquidTexel.x), static_cast<float>(lf.liquidTexel.y));
+            glUniform4f(uniforms.liqA, f(c.liquidAmount), f(c.liquidRefraction), f(c.liquidColor), f(c.liquidRipple));
+            glUniform1f(uniforms.liqGlints, f(c.liquidGlints));
+        }
+    }
 
     glUniform2f(uniforms.uvPadding,
         static_cast<float>(paddingRatio.x),

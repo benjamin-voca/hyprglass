@@ -1,3 +1,6 @@
+#include "GlassLight.hpp"
+#include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include "GlassDecoration.hpp"
 #include "BackgroundDamageObserver.hpp"
 #include "BuiltInPresets.hpp"
@@ -12,9 +15,13 @@
 #include "WorkspaceAnimation.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <format>
 #include <GLES3/gl32.h>
 #include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+#include <hyprland/src/helpers/Color.hpp>
+#include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
@@ -23,6 +30,7 @@
 
 CGlassDecoration::CGlassDecoration(PHLWINDOW window)
     : IHyprWindowDecoration(window), m_window(window) {
+    m_createdAt = GlassLight::nowSeconds();
 }
 
 CGlassDecoration::~CGlassDecoration() {
@@ -373,6 +381,13 @@ void CGlassDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR monitor, flo
     }
 }
 
+
+// A monitor-local pixel point in the space the shader works in. Since hyprglass 1.1
+// the pass is drawn unrotated, so this space is the monitor's own.
+static Vector2D glassTransformedPoint(const Vector2D& monitorLocalPx, PHLMONITOR) {
+    return monitorLocalPx;
+}
+
 PHLWINDOW CGlassDecoration::getOwner() {
     return m_window.lock();
 }
@@ -627,6 +642,46 @@ void CGlassDecoration::renderPass(Render::CRenderContext& ctx, PHLMONITOR monito
         }
     }
 
+    {   // glass light values for this window's draw
+        using GlassLight::f;
+        auto&        lf  = g_pGlobalState->lightFrame;
+        const auto&  cfg = g_pGlobalState->config;
+        const double now = GlassLight::nowSeconds();
+
+        const bool focused = Desktop::focusState()->window() == window;
+        lf.share = focused ? 1.0f : std::clamp(f(cfg.lightInactive), 0.0f, 1.0f);
+        lf.oilShare = focused ? 1.0f : std::clamp(f(cfg.oilInactive), 0.0f, 1.0f);
+
+        const float md  = GlassLight::materializeDuration();
+        lf.materialize  = (md > 0.01f ? GlassLight::ease(static_cast<float>((now - m_createdAt) / md)) : 1.0f) * glassAlpha;
+
+        const Vector2D cursor = GlassLight::lightCursor(g_pInputManager->getMouseCoordsInternal());
+        const Vector2D light  = GlassLight::lightPositionGlobal(cursor);
+
+        // parallax: cursor offset from the window centre, as a share of the monitor
+        lf.parallax = {0, 0};
+        if (GlassLight::parallaxOn()) {
+            const auto   box  = window->getWindowMainSurfaceBox();
+            const auto   rel  = (cursor - box.middle()) / std::max(monitor->m_size.x, monitor->m_size.y);
+            const double px   = f(cfg.parallaxStrength) * monitor->m_scale;
+            lf.parallax = {-std::clamp(rel.x, -1.0, 1.0) * px, -std::clamp(rel.y, -1.0, 1.0) * px};
+        }
+        lf.lightPos = glassTransformedPoint((light - monitor->m_position) * monitor->m_scale, monitor);
+
+        lf.glow = -1.0f;
+        if (GlassLight::glowOn() && g_pGlobalState->glowWindow.lock() == window) {
+            const double p = (now - g_pGlobalState->glowStart) / GlassLight::glowDuration();
+            if (p >= 0.0 && p < 1.0) {
+                lf.glow      = static_cast<float>(p);
+                // transformBox, not windowBox: the point above is now in transformed space
+                lf.glowLocal = glassTransformedPoint((g_pGlobalState->glowPoint - monitor->m_position) * monitor->m_scale, monitor)
+                               - Vector2D(windowBox.x, windowBox.y);
+            }
+        }
+    }
+
+    updateLiquid(ctx, monitor, windowBox, source);
+
     // Frost: blurred further where windows lie behind, clear over the wallpaper. X-ray
     // shows no window behind the glass, and a fullscreen window has nothing behind it.
     GlassRenderer::SFrostInput frostInput;
@@ -678,6 +733,125 @@ void CGlassDecoration::renderPass(Render::CRenderContext& ctx, PHLMONITOR monito
                                      std::array<float, 4>{cornerRadius, cornerRadius, cornerRadius, cornerRadius},
                                      roundingPower, m_samplePaddingRatio, resolveContext, nullptr, focusLight,
                                      frostInput.copy ? &frostInput : nullptr);
+
+    g_pGlobalState->lightFrame.liquidOn = false;
+}
+
+void CGlassDecoration::liquidWake(double now) {
+    m_liquidWanted   = true;
+    m_liquidLastStir = now;
+}
+
+bool CGlassDecoration::liquidBusy(double now) const {
+    if (!m_liquidWanted && !m_liquid)
+        return false;
+    // a little past the settle time, so one frame draws the glass dry again
+    return now - m_liquidLastStir < GlassLight::liquidSettle() + 0.25;
+}
+
+// Liquid Touch: step this window's fluid while it is stirred and hand its
+// textures to the glass draw through lightFrame. Runs inside the render pass;
+// CLiquidSim::update() leaves the GL state as it found it.
+void CGlassDecoration::updateLiquid(Render::CRenderContext& ctx, PHLMONITOR monitor, const CBox& transformBox, const SP<Render::IFramebuffer>& source) {
+    using GlassLight::f;
+    auto& lf    = g_pGlobalState->lightFrame;
+    lf.liquidOn = false;
+
+    const double now = GlassLight::nowSeconds();
+    if (!GlassLight::liquidOn() || !m_liquidWanted || now - m_liquidLastStir > GlassLight::liquidSettle()) {
+        m_liquid.reset();
+        m_liquidWanted = false;
+        return;
+    }
+
+    const auto window = m_window.lock();
+    if (!window || !monitor || !source || transformBox.w < 1 || transformBox.h < 1)
+        return;
+
+    const auto&  c     = g_pGlobalState->config;
+    const float  scale = monitor->m_scale > 0.0f ? monitor->m_scale : 1.0f;
+    const double cell  = std::clamp(f(c.liquidCell), 2.0f, 32.0f) * scale;
+    const int    gridW = std::clamp(static_cast<int>(std::lround(transformBox.w / cell)), 16, 384);
+    const int    gridH = std::clamp(static_cast<int>(std::lround(transformBox.h / cell)), 16, 384);
+
+    const Vector2D mouse = g_pInputManager->getMouseCoordsInternal();
+    const bool     fresh = !m_liquid;
+    if (fresh) {
+        m_liquid          = makeUnique<CLiquidSim>();
+        m_liquidCursor    = mouse;
+        m_liquidCursorVel = {};
+        m_liquidLastStep  = now;
+    }
+
+    const auto publish = [&] {
+        lf.liquidOn    = true;
+        lf.liquidDye   = m_liquid->dye();
+        lf.liquidVel   = m_liquid->velocity();
+        lf.liquidDisp  = m_liquid->displacement();
+        lf.liquidTexel = {1.0 / gridW, 1.0 / gridH};
+    };
+
+    // a second draw of the same frame (another monitor, a duplicate pass): no new step
+    const double since = now - m_liquidLastStep;
+    if (!fresh && since < 0.002) {
+        if (m_liquid->dye())
+            publish();
+        return;
+    }
+    const float dt   = std::clamp(static_cast<float>(since), 1.0f / 240.0f, 1.0f / 30.0f);
+    m_liquidLastStep = now;
+
+    // the pointer as the liquid sees it: a critically damped spring, so strokes stay
+    // smooth even when the mouse only reports a few dozen times a second
+    const Vector2D prev = m_liquidCursor;
+    const double   w    = LIQUID_SPRING;
+    m_liquidCursorVel   = m_liquidCursorVel + ((mouse - m_liquidCursor) * (w * w) - m_liquidCursorVel * (2.0 * w)) * dt;
+    m_liquidCursor      = m_liquidCursor + m_liquidCursorVel * dt;
+    const double   seg  = std::hypot(m_liquidCursor.x - prev.x, m_liquidCursor.y - prev.y);
+
+    SLiquidSplat splat;
+    const bool   stir = seg > 0.05 && g_pGlobalState->liquidWindow.lock() == window;
+    if (stir) {
+        // global logical -> this glass box's UV, in the same transformed space as boxPos
+        const auto toUV = [&](const Vector2D& p) {
+            const Vector2D t = glassTransformedPoint((p - monitor->m_position) * monitor->m_scale, monitor);
+            return Vector2D{(t.x - transformBox.x) / transformBox.w, (t.y - transformBox.y) / transformBox.h};
+        };
+        const Vector2D a      = toUV(prev);
+        const Vector2D b      = toUV(m_liquidCursor);
+        const float    radius = std::max(f(c.liquidRadius), 2.0f);
+        const float    force  = f(c.liquidForce) / dt;
+        splat.ax     = static_cast<float>(a.x);
+        splat.ay     = static_cast<float>(a.y);
+        splat.bx     = static_cast<float>(b.x);
+        splat.by     = static_cast<float>(b.y);
+        splat.vx     = static_cast<float>(b.x - a.x) * gridW * force;
+        splat.vy     = static_cast<float>(b.y - a.y) * gridH * force;
+        splat.amount = std::min(static_cast<float>(seg) / (radius * 1.8f), 1.0f);
+        splat.aspect = static_cast<float>(transformBox.w / transformBox.h);
+        splat.radius = radius * scale / static_cast<float>(transformBox.h);
+        m_liquidLastStir = now;
+    }
+
+    SLiquidParams params;
+    params.swirl = std::max(f(c.liquidSwirl), 0.0f);
+    params.fade  = std::max(f(c.liquidFade), 0.0f);
+    params.drag  = f(c.liquidDrag);
+    params.back  = std::max(f(c.liquidReturn), 0.0f);
+    params.steps = std::clamp(static_cast<int>(std::lround(f(c.liquidSteps))), 2, 60);
+
+    if (!m_liquid->update(ctx, gridW, gridH, dt, stir ? &splat : nullptr, params, GlassRenderer::framebufferId(source),
+                          static_cast<int>(source->m_size.x), static_cast<int>(source->m_size.y))) {
+        m_liquid.reset();
+        m_liquidWanted = false;
+        if (!g_pGlobalState->liquidUnsupported) {
+            g_pGlobalState->liquidUnsupported = true;
+            HyprlandAPI::addNotification(PHANDLE, std::format("[{}] Liquid Touch needs half-float render targets; this GPU has none, liquid is off", PLUGIN_NAME),
+                                         CHyprColor{1.0, 0.8, 0.2, 1.0}, 5000);
+        }
+        return;
+    }
+    publish();
 }
 
 eDecorationType CGlassDecoration::getDecorationType() {

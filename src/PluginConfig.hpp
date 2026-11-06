@@ -82,6 +82,58 @@ inline constexpr auto BLUR_FOLD           = "plugin:hyprglass:blur_fold";
 inline constexpr auto DEBUG_MODE   = "plugin:hyprglass:debug:mode";
 inline constexpr auto DEBUG_TIMERS = "plugin:hyprglass:debug:timers";
 
+// ---- Liquid Glass motion (global-only) --------------------------------------
+// Light: a light source over the whole desktop lights each window's rim where
+// it faces the light; the light leans toward the cursor, so moving a window or
+// the pointer slides the highlight round the rim.
+inline constexpr auto LIGHT_STRENGTH       = "plugin:hyprglass:light_strength";        // light added on the rim (0 = none; the glass can still bend)
+inline constexpr auto LIGHT_BEND           = "plugin:hyprglass:light_bend";            // how much the rim bends where it faces the light (0 = none)
+inline constexpr auto LIGHT_X              = "plugin:hyprglass:light_x";               // across all monitors: 0 = left edge, 1 = right edge
+inline constexpr auto LIGHT_Y              = "plugin:hyprglass:light_y";               // 0 = top of the monitors, below 0 = above them
+inline constexpr auto LIGHT_CURSOR         = "plugin:hyprglass:light_cursor";          // how far the light leans toward the cursor (0-1)
+inline constexpr auto LIGHT_LAG            = "plugin:hyprglass:light_lag";             // seconds light + parallax take to catch the cursor (0 = instant)
+inline constexpr auto LIGHT_SHARPNESS      = "plugin:hyprglass:light_sharpness";       // how tightly the highlight gathers
+inline constexpr auto LIGHT_WIDTH          = "plugin:hyprglass:light_width";           // how far into the glass the rim light reaches, px
+inline constexpr auto LIGHT_FAR            = "plugin:hyprglass:light_far";             // soft reflection on the side facing away
+inline constexpr auto LIGHT_INACTIVE       = "plugin:hyprglass:light_inactive";        // unfocused windows' share of the rim light
+inline constexpr auto LIGHT_COLOR          = "plugin:hyprglass:light_color";           // 0xRRGGBB
+inline constexpr auto LIGHT_DRIFT          = "plugin:hyprglass:light_drift";           // the light slowly wanders this far (share of the desktop, 0 = still)
+inline constexpr auto LIGHT_DRIFT_PERIOD   = "plugin:hyprglass:light_drift_period";    // seconds for one slow wander
+// Parallax: the view behind the glass shifts against the pane as the cursor moves.
+inline constexpr auto PARALLAX_STRENGTH    = "plugin:hyprglass:parallax_strength";     // px (0 = off)
+inline constexpr auto PARALLAX_DEPTH       = "plugin:hyprglass:parallax_depth";        // extra shift toward the rim, so the glass reads as thick
+// Oil film: slow iridescent swirls on the glass, like oil on water.
+inline constexpr auto OIL_AMOUNT           = "plugin:hyprglass:oil_amount";            // 0 = off
+inline constexpr auto OIL_SPEED            = "plugin:hyprglass:oil_speed";             // how fast the film flows
+inline constexpr auto OIL_SCALE            = "plugin:hyprglass:oil_scale";             // swirl size, px
+inline constexpr auto OIL_COLOR            = "plugin:hyprglass:oil_color";             // 0 = clear sheen, 1 = full iridescence
+inline constexpr auto OIL_WARP             = "plugin:hyprglass:oil_warp";              // how much the film ripples the view behind
+inline constexpr auto OIL_INACTIVE         = "plugin:hyprglass:oil_inactive";          // unfocused windows' share (0 = focused only)
+inline constexpr auto OIL_FPS              = "plugin:hyprglass:oil_fps";               // redraws per second while it flows
+// Click glow: clicking a glass window energizes it from the click point.
+inline constexpr auto GLOW_STRENGTH        = "plugin:hyprglass:glow_strength";         // light added (0 = none; the glass can still flex)
+inline constexpr auto GLOW_FLEX            = "plugin:hyprglass:glow_flex";             // how much the ripple flexes the glass (0 = none)
+inline constexpr auto GLOW_DURATION        = "plugin:hyprglass:glow_duration";         // seconds to spread and fade
+inline constexpr auto GLOW_SPREAD          = "plugin:hyprglass:glow_spread";           // how far it travels, share of the window size
+inline constexpr auto GLOW_RING            = "plugin:hyprglass:glow_ring";             // ring width, px
+// Materialize: new windows appear by ramping up their bending, not by fading.
+inline constexpr auto MATERIALIZE_DURATION = "plugin:hyprglass:materialize_duration";  // seconds (0 = off)
+// Liquid Touch: the pointer stirs a thin clear liquid on the glass of the window
+// under it; a small fluid simulation runs per window, only while it is stirred.
+inline constexpr auto LIQUID_AMOUNT        = "plugin:hyprglass:liquid_amount";         // 0 = off, 1 = full look
+inline constexpr auto LIQUID_RADIUS        = "plugin:hyprglass:liquid_radius";         // brush radius, px
+inline constexpr auto LIQUID_FORCE         = "plugin:hyprglass:liquid_force";          // how hard the pointer pushes the liquid
+inline constexpr auto LIQUID_SWIRL         = "plugin:hyprglass:liquid_swirl";          // vorticity: how much the flow curls
+inline constexpr auto LIQUID_FADE          = "plugin:hyprglass:liquid_fade";           // how fast the liquid dries up (per second)
+inline constexpr auto LIQUID_DRAG          = "plugin:hyprglass:liquid_drag";           // how far the flow carries the view behind
+inline constexpr auto LIQUID_RETURN        = "plugin:hyprglass:liquid_return";         // how fast the dragged view flows back
+inline constexpr auto LIQUID_REFRACTION    = "plugin:hyprglass:liquid_refraction";     // lens strength where the liquid is thick
+inline constexpr auto LIQUID_COLOR         = "plugin:hyprglass:liquid_color";          // rainbow split on curved liquid (0 = none)
+inline constexpr auto LIQUID_RIPPLE        = "plugin:hyprglass:liquid_ripple";         // ripples raised by fast flow
+inline constexpr auto LIQUID_GLINTS        = "plugin:hyprglass:liquid_glints";         // sharp highlights on the liquid
+inline constexpr auto LIQUID_STEPS         = "plugin:hyprglass:liquid_steps";          // pressure solver steps per frame (cost)
+inline constexpr auto LIQUID_CELL          = "plugin:hyprglass:liquid_cell";           // simulation cell size, px (cost)
+
 // Overridable — global level
 inline constexpr auto BLUR_STRENGTH        = "plugin:hyprglass:blur_strength";
 inline constexpr auto BLUR_ITERATIONS      = "plugin:hyprglass:blur_iterations";
@@ -368,6 +420,49 @@ struct SPluginConfig {
     // Derives a smaller blur pass count from the requested radius (GlassRenderer::
     // foldBlurPasses) instead of always running blur_iterations passes at full radius.
     Config::BOOL* const*    blurFold          = nullptr;
+
+    // glass light
+    Config::FLOAT* const* lightStrength = nullptr;
+    Config::FLOAT* const* lightX = nullptr;
+    Config::FLOAT* const* lightY = nullptr;
+    Config::FLOAT* const* lightSharpness = nullptr;
+    Config::FLOAT* const* lightWidth = nullptr;
+    Config::FLOAT* const* lightFar = nullptr;
+    Config::FLOAT* const* lightBend = nullptr;
+    Config::FLOAT* const* lightCursor = nullptr;
+    Config::FLOAT* const* lightInactive = nullptr;
+    Config::FLOAT* const* glowStrength = nullptr;
+    Config::FLOAT* const* glowDuration = nullptr;
+    Config::FLOAT* const* glowSpread = nullptr;
+    Config::FLOAT* const* glowRing = nullptr;
+    Config::FLOAT* const* glowFlex = nullptr;
+    Config::FLOAT* const* materializeDuration = nullptr;
+    Config::INTEGER* const*   lightColor = nullptr;
+    Config::FLOAT* const* lightDrift = nullptr;
+    Config::FLOAT* const* lightDriftPeriod = nullptr;
+    Config::FLOAT* const* lightLag = nullptr;
+    Config::FLOAT* const* parallaxStrength = nullptr;
+    Config::FLOAT* const* parallaxDepth = nullptr;
+    Config::FLOAT* const* oilAmount = nullptr;
+    Config::FLOAT* const* oilSpeed = nullptr;
+    Config::FLOAT* const* oilScale = nullptr;
+    Config::FLOAT* const* oilColor = nullptr;
+    Config::FLOAT* const* oilWarp = nullptr;
+    Config::FLOAT* const* oilInactive = nullptr;
+    Config::FLOAT* const* oilFps = nullptr;
+    Config::FLOAT* const* liquidAmount = nullptr;
+    Config::FLOAT* const* liquidRadius = nullptr;
+    Config::FLOAT* const* liquidForce = nullptr;
+    Config::FLOAT* const* liquidSwirl = nullptr;
+    Config::FLOAT* const* liquidFade = nullptr;
+    Config::FLOAT* const* liquidDrag = nullptr;
+    Config::FLOAT* const* liquidReturn = nullptr;
+    Config::FLOAT* const* liquidRefraction = nullptr;
+    Config::FLOAT* const* liquidColor = nullptr;
+    Config::FLOAT* const* liquidRipple = nullptr;
+    Config::FLOAT* const* liquidGlints = nullptr;
+    Config::FLOAT* const* liquidSteps = nullptr;
+    Config::FLOAT* const* liquidCell = nullptr;
     // Hyprland's render:xp_mode: no wallpaper or bottom layers are drawn, so
     // there is nothing for x-ray to show.
     BoolConfigPtr           xpMode;

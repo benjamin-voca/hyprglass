@@ -72,6 +72,28 @@ uniform float bevelAngle;
 uniform float bevelShadow;
 uniform float specularAngle;
 
+// Glass light (see GlassLight.hpp). Packed:
+uniform vec2  lightPos;     // light source, monitor-local px
+uniform vec4  lightA;       // light amount, sharpness, rim width px, far-side reflection
+uniform vec4  lightB;       // bend, click glow progress (-1 = none), glow light amount, glow flex
+uniform vec3  lightColor;
+uniform vec2  glowPoint;    // click point, window-local px
+uniform vec2  glowC;        // glow reach px, ring width px
+uniform float materialize;  // 0..1: new windows ramp their bending up
+uniform vec2  boxPos;       // window top-left, monitor-local px
+uniform vec3  parallax;     // xy = view shift px (cursor tilt), z = extra toward the rim
+uniform vec4  oilA;         // amount (0 = off), time (s, pre-scaled by speed), swirl size px, colourfulness
+uniform vec4  oilB;         // warp px, unused x3
+
+// Liquid Touch (LiquidSim.hpp): this window's fluid simulation, in box UV.
+uniform int       liqOn;      // 1 while this window's liquid is live
+uniform sampler2D liqDye;     // x = liquid thickness 0..1
+uniform sampler2D liqVel;     // xy = flow, sim cells per second
+uniform sampler2D liqDisp;    // xy = how far the view behind is dragged, box UV
+uniform vec2      liqTexel;   // one sim cell, box UV
+uniform vec4      liqA;       // amount (scales the whole look), refraction, colour split, ripple
+uniform float     liqGlints;
+
 uniform sampler2D maskTex;
 uniform int useMask;
 uniform vec2 maskUVOffset;
@@ -254,6 +276,47 @@ float getBevelSDF(vec2 uv) {
     }
     vec2 s = p - H + h;
     return -max(d, h - length(max(s, 0.0)) - min(max(s.x, s.y), 0.0));
+}
+
+// Normal the light reads. The window's own corners are tight, so their normal
+// swings 90 degrees in a few px and the highlight pinches into a bright point
+// there. Light uses a much rounder box (radius R) instead, so it turns the
+// corner gradually and the lit band stays an even stroke.
+vec2 lightNormal(vec2 uv, float R) {
+    vec2  H = fullSize * 0.5;
+    vec2  p = (uv - 0.5) * fullSize;
+    R = min(R, min(H.x, H.y));
+    vec2  q = abs(p) - H + R;
+    vec2  n = (q.x > 0.0 && q.y > 0.0) ? normalize(q)
+            : (q.x > q.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+    return n * sign(p);
+}
+
+// ============================================================================
+// OIL FILM helpers: smooth value noise, fbm, domain warping
+// ============================================================================
+
+float oilHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 45758.5453); }
+
+float oilNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(oilHash(i), oilHash(i + vec2(1.0, 0.0)), u.x),
+               mix(oilHash(i + vec2(0.0, 1.0)), oilHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float oilFbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 3; i++) { v += a * oilNoise(p); p = p * 2.03 + vec2(17.0, 9.0); a *= 0.5; }
+    return v;
+}
+
+// Liquid surface height, from the simulation only: thick liquid forms a smooth
+// lens and fast flow raises ripples on it.
+float liquidHeight(vec2 uv) {
+    float dye   = texture(liqDye, uv).x;
+    float speed = length(texture(liqVel, uv).xy);
+    return dye * 0.6 + speed * liqA.w * 0.004 * smoothstep(0.0, 0.3, dye);
 }
 
 // ============================================================================
@@ -444,6 +507,48 @@ void main() {
     vec2 posPx = (glassUV - 0.5) * glassBoxSizePx; // pixel-space position for the edge-flow direction below
 #endif
 
+    // ========================================
+    // GLASS LIGHT — the rim catches a light source where it faces it (moving
+    // the window or the cursor moves the highlight), plus a softer reflection
+    // on the far side. Where it's lit the glass concentrates light (bends more).
+    // Computed before the refraction split so both edge models get it.
+    // ========================================
+    float lightAmt = 0.0;
+    vec2  lightGlowOffset = vec2(0.0);   // extra bend from the light and the click glow
+    // light amount (lightA.x) and bend (lightB.x) are independent: with no
+    // added light the rim still bends toward the light, and vice versa.
+    if (lightA.x > 0.001 || abs(lightB.x) > 0.001) {
+        // one direction per window (from its centre), like sunlight: a per-pixel
+        // direction fans out into a pointed cone when the light sits near an edge
+        vec2  toL = lightPos - (boxPos + 0.5 * fullSize);
+        vec2  n   = lightNormal(uv, max(pickCornerRadius((uv - 0.5) * fullSize, radii), lightA.z * 6.0));
+        vec2  L   = length(toL) > 1.0 ? normalize(toL) : vec2(0.0, -1.0);
+        float ndl = dot(n, L);
+        float rim = exp(bevelSdf / max(lightA.z, 1.0));       // 1 at the edge, fading inward
+        float lit = pow(max(ndl, 0.0), lightA.y);
+        float far = pow(max(-ndl, 0.0), lightA.y) * lightA.w;
+        lightAmt  = (lit + far) * rim * lightA.x;
+        lightGlowOffset += inwardDir * (lit * rim * lightB.x * 20.0) / fullSize * materialize;
+    }
+
+    // ========================================
+    // CLICK GLOW — energizes from the click point: a ring of light spreads
+    // through the glass and fades, flexing the glass outward as it passes.
+    // ========================================
+    float glowAmt = 0.0;
+    if (lightB.y >= 0.0) {   // glow light (lightB.z) and flex (lightB.w) independent
+        float gp   = lightB.y;
+        vec2  px   = uv * fullSize;
+        float d    = distance(px, glowPoint);
+        float R    = glowC.x * (1.0 - pow(1.0 - gp, 3.0));    // ease out
+        float fade = pow(1.0 - gp, 2.0);
+        float ring = exp(-pow((d - R) / max(glowC.y, 1.0), 2.0));
+        float fill = exp(-pow(d / max(R * 0.6 + 1.0, 1.0), 2.0)) * 0.5;
+        glowAmt    = (ring + fill) * fade * lightB.z;
+        vec2 away  = d > 0.5 ? (px - glowPoint) / d : vec2(0.0);
+        lightGlowOffset += away * (ring * fade * lightB.w * 14.0) / fullSize;
+    }
+
 #ifdef HYPRGLASS_FEATURE_LENS_EDGE
     // ========================================
     // LENS EDGE REFRACTION (see lensBendPx). Replaces the soft edge refraction
@@ -486,6 +591,9 @@ void main() {
             offsetB = inwardStep * lensBendPx(lensNormal, lensSurfacePx, LENS_IOR + spread, gain, bezelWidthPx);
         }
     }
+    offsetR = offsetR * materialize + lightGlowOffset;
+    offsetG = offsetG * materialize + lightGlowOffset;
+    offsetB = offsetB * materialize + lightGlowOffset;
 #else
     // ========================================
     // EDGE REFRACTION
@@ -513,7 +621,7 @@ void main() {
         dir = mixedLen > 0.0001 ? mixedDir / mixedLen : inwardDir;
     }
 #endif
-    vec2 baseOffset = dir * refractionMag * invFullSize;
+    vec2 baseOffset = dir * refractionMag * invFullSize * materialize + lightGlowOffset;
 
     // ========================================
     // CHROMATIC ABERRATION — per-channel refraction scale
@@ -538,7 +646,7 @@ void main() {
             -4.0 * c.y * (1.0 - c.x * c.x)
         );
         float lensFade = 1.0 - edgeProximity;
-        domeUV = dGrad * lensMaxPx * lensFade * invFullSize;
+        domeUV = dGrad * lensMaxPx * lensFade * invFullSize * materialize;
     }
 #endif
 
@@ -547,15 +655,62 @@ void main() {
     // Nearby color influence comes naturally from the Gaussian blur
     // kernel crossing the window boundary — no explicit raw sampling.
     // ========================================
+    // ========================================
+    // OIL FILM — a thin film on the glass: slow domain-warped swirls whose
+    // thickness sets an iridescent colour (like oil on water), in patches,
+    // gently rippling the view behind it. Attached to the window.
+    // ========================================
+    float oilSlick = 0.0;
+    vec3  oilTint  = vec3(0.0);
+    vec2  oilUV    = vec2(0.0);
+    if (oilA.x > 0.001) {
+        vec2  p  = uv * fullSize / max(oilA.z, 1.0);
+        float t  = oilA.y;
+        vec2  q  = vec2(oilFbm(p + vec2(0.0, t * 0.11)), oilFbm(p + vec2(5.2, 1.3) - t * 0.09));
+        float th = oilFbm(p + 3.0 * q + vec2(t * 0.05, -t * 0.04));
+        oilSlick = smoothstep(0.42, 0.72, th);
+        vec3 film = 0.5 + 0.5 * cos(6.2831853 * (th * 2.2 + vec3(0.0, 0.33, 0.67)));
+        oilTint  = mix(vec3(1.0), film, clamp(oilA.w, 0.0, 1.0));
+        oilUV    = (q - 0.5) * oilB.x / fullSize * materialize;
+    }
+
+    // PARALLAX — the view behind the glass shifts against the pane as the
+    // cursor moves (like tilting thick glass), a bit more toward the rim.
+    // Same shift for every channel, so no colour fringing across the pane.
+    vec2 parallaxUV = parallax.xy * (1.0 + parallax.z * edgeProximity) / fullSize * materialize;
+
+    // ========================================
+    // LIQUID TOUCH — the pointer stirs a thin clear liquid on the glass: where
+    // it's thick it bulges into a lens, the flow drags the view behind along
+    // (and it flows back), and its curved parts split colour and catch glints.
+    // After Sabo Sugi's "Viscous Liquid - Cursor FX" (MIT, THIRD_PARTY_NOTICES.md).
+    // ========================================
+    vec3  liqN      = vec3(0.0, 0.0, 1.0);
+    vec2  liqUV     = vec2(0.0);
+    vec2  liqSpread = vec2(0.0);
+    float liqWet    = 0.0;
+    if (liqOn == 1) {
+        vec2 tx   = vec2(liqTexel.x, 0.0);
+        vec2 ty   = vec2(0.0, liqTexel.y);
+        vec2 grad = vec2(liquidHeight(uv + tx) - liquidHeight(uv - tx),
+                         liquidHeight(uv + ty) - liquidHeight(uv - ty)) * 0.5;
+        liqN      = normalize(vec3(-grad * 6.0, 1.0));
+        liqWet    = smoothstep(0.0, 0.35, texture(liqDye, uv).x);
+        vec2 disp = texture(liqDisp, uv).xy;
+        vec2 lens = liqN.xy * minDim * invFullSize;   // same strength in px on any window shape
+        liqUV     = (disp - lens * liqA.y * 0.05) * liqA.x;
+        liqSpread = (lens * 0.035 + disp * 0.04) * liqA.z * liqA.x;
+    }
+
     vec3 color;
-    vec2 uvR = uv + offsetR + domeUV;
-    vec2 uvG = uv + offsetG + domeUV;
-    vec2 uvB = uv + offsetB + domeUV;
+    vec2 uvR = uv + offsetR + domeUV + parallaxUV + oilUV + liqUV - liqSpread * 0.5;
+    vec2 uvG = uv + offsetG + domeUV + parallaxUV + oilUV + liqUV;
+    vec2 uvB = uv + offsetB + domeUV + parallaxUV + oilUV + liqUV + liqSpread * 0.5;
 
 #ifdef HYPRGLASS_FEATURE_LENS_EDGE
-    if (chromaticAberration > 0.001 && inRim) {
+    if ((chromaticAberration > 0.001 && inRim) || liqOn == 1) {
 #else
-    if (chromaticAberration > 0.001 && edgeProximity > 0.01) {
+    if ((chromaticAberration > 0.001 && edgeProximity > 0.01) || liqOn == 1) {
 #endif
         color.r = sampleBlurred(uvR).r;
         color.g = sampleBlurred(uvG).g;
@@ -670,6 +825,15 @@ void main() {
         tintSource = mix(mix(tintSource, bevelLight, bevelLit), vec3(0.0), bevelDark);
     }
 
+    // liquid light: faint shading toward the glass light, sharp glints only
+    if (liqOn == 1) {
+        vec2  toL = lightPos - (boxPos + 0.5 * fullSize);
+        vec2  L2  = length(toL) > 1.0 ? normalize(toL) : vec2(0.0, -1.0);
+        color    *= max(1.0 + dot(liqN.xy, L2) * 0.15 * liqWet * liqA.x, 0.0);
+        vec3  H   = normalize(normalize(vec3(L2, 1.2)) + vec3(0.0, 0.0, 1.0));
+        color    += vec3(pow(max(dot(liqN, H), 0.0), 120.0) * liqGlints * liqA.x);
+    }
+
     // ========================================
     // FRESNEL RIM GLOW (edge zone)
     // ========================================
@@ -704,6 +868,14 @@ void main() {
         float topBias = pow(specT, 2.0);
         float spec = topBias * edgeProximity * edgeProximity * specularStrength * 0.08;
         color += vec3(1.0, 0.99, 0.97) * spec;
+    }
+
+    color += lightColor * lightAmt * 0.55 + vec3(1.0, 0.99, 0.97) * glowAmt * 0.35;
+
+    // oil sheen: soft-light the film colour into the glass where the film is thick
+    if (oilSlick > 0.0) {
+        float k = oilA.x * oilSlick;
+        color = mix(color, color * (0.7 + 0.6 * oilTint) + oilTint * 0.06, k);
     }
 
     // ========================================
@@ -770,6 +942,185 @@ void main() {
         // because the GL_ONE source factor adds raw color regardless of alpha.
         fragColor = vec4(color * glassA, glassA);
     }
+}
+)GLSL"},
+
+    // ---- Liquid Touch: fluid simulation passes (LiquidSim.cpp) ----
+    // Adapted from Sabo Sugi's "Viscous Liquid - Cursor FX" and Pavel Dobryakov's
+    // WebGL Fluid Simulation, both MIT: see THIRD_PARTY_NOTICES.md.
+    {"liquid_splat.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+uniform vec4 seg;     // stroke from xy to zw, box UV
+uniform vec4 push;    // xy = velocity (cells/s), z = amount, w = 0 velocity / 1 liquid
+uniform vec2 shape;   // x = box aspect, y = brush radius (share of box height)
+void main() {
+    vec2 p = v_texcoord, a = seg.xy, b = seg.zw;
+    p.x *= shape.x; a.x *= shape.x; b.x *= shape.x;
+    vec2  pa = p - a, ba = b - a;
+    float h  = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0);
+    float d  = length(pa - ba * h);
+    float f  = exp(-d * d / (shape.y * shape.y));
+    vec4 base = texture(tex, v_texcoord);
+    if (push.w < 0.5)
+        fragColor = vec4(base.xy + push.xy * f * push.z, 0.0, 1.0);
+    else
+        fragColor = vec4(min(base.x + f * push.z, 1.0), 0.0, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"liquid_advect.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+uniform sampler2D uVel;
+uniform float dt;
+uniform float dissipation;
+uniform float velScale;
+void main() {
+    vec2 coord = v_texcoord - dt * velScale * texture(uVel, v_texcoord).xy * texel;
+    fragColor = texture(tex, coord) / (1.0 + dissipation * dt);
+}
+)GLSL"},
+
+    {"liquid_displace.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+// tex = displacement: the view behind is sampled at uv + D
+uniform sampler2D uVel;
+uniform sampler2D uDye;
+uniform float dt;
+uniform float decay;
+uniform float drag;
+void main() {
+    float wet  = smoothstep(0.0, 0.2, texture(uDye, v_texcoord).x);
+    vec2  step = dt * drag * wet * texture(uVel, v_texcoord).xy * texel;
+    vec2  d    = texture(tex, v_texcoord - step).xy - step;
+    d *= mix(decay * decay * decay, decay, wet);   // dry glass lets go faster
+    fragColor = vec4(d, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"liquid_divergence.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+void main() {
+    vec2 vL = v_texcoord - vec2(texel.x, 0.0), vR = v_texcoord + vec2(texel.x, 0.0);
+    vec2 vT = v_texcoord + vec2(0.0, texel.y), vB = v_texcoord - vec2(0.0, texel.y);
+    float L = texture(tex, vL).x;
+    float R = texture(tex, vR).x;
+    float T = texture(tex, vT).y;
+    float B = texture(tex, vB).y;
+    vec2  C = texture(tex, v_texcoord).xy;
+    if (vL.x < 0.0) L = -C.x;
+    if (vR.x > 1.0) R = -C.x;
+    if (vT.y > 1.0) T = -C.y;
+    if (vB.y < 0.0) B = -C.y;
+    fragColor = vec4(0.5 * (R - L + T - B), 0.0, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"liquid_curl.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+void main() {
+    float L = texture(tex, v_texcoord - vec2(texel.x, 0.0)).y;
+    float R = texture(tex, v_texcoord + vec2(texel.x, 0.0)).y;
+    float T = texture(tex, v_texcoord + vec2(0.0, texel.y)).x;
+    float B = texture(tex, v_texcoord - vec2(0.0, texel.y)).x;
+    fragColor = vec4(0.5 * (R - L - T + B), 0.0, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"liquid_vorticity.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+uniform sampler2D uCurl;
+uniform float curl;
+uniform float dt;
+void main() {
+    float L = texture(uCurl, v_texcoord - vec2(texel.x, 0.0)).x;
+    float R = texture(uCurl, v_texcoord + vec2(texel.x, 0.0)).x;
+    float T = texture(uCurl, v_texcoord + vec2(0.0, texel.y)).x;
+    float B = texture(uCurl, v_texcoord - vec2(0.0, texel.y)).x;
+    float C = texture(uCurl, v_texcoord).x;
+    vec2 force = 0.5 * vec2(abs(T) - abs(B), abs(R) - abs(L));
+    force /= length(force) + 0.0001;
+    force *= curl * C;
+    force.y *= -1.0;
+    vec2 vel = texture(tex, v_texcoord).xy + force * dt;
+    fragColor = vec4(clamp(vel, -1000.0, 1000.0), 0.0, 1.0);
+}
+)GLSL"},
+
+    {"liquid_scale.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+uniform float value;
+void main() {
+    fragColor = value * texture(tex, v_texcoord);
+}
+)GLSL"},
+
+    {"liquid_pressure.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+uniform sampler2D uDiv;
+void main() {
+    float L = texture(tex, v_texcoord - vec2(texel.x, 0.0)).x;
+    float R = texture(tex, v_texcoord + vec2(texel.x, 0.0)).x;
+    float T = texture(tex, v_texcoord + vec2(0.0, texel.y)).x;
+    float B = texture(tex, v_texcoord - vec2(0.0, texel.y)).x;
+    float div = texture(uDiv, v_texcoord).x;
+    fragColor = vec4((L + R + B + T - div) * 0.25, 0.0, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"liquid_gradient.frag", R"GLSL(
+#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+uniform sampler2D tex;
+uniform vec2 texel;   // one sim cell
+uniform sampler2D uVel;
+void main() {
+    float L = texture(tex, v_texcoord - vec2(texel.x, 0.0)).x;
+    float R = texture(tex, v_texcoord + vec2(texel.x, 0.0)).x;
+    float T = texture(tex, v_texcoord + vec2(0.0, texel.y)).x;
+    float B = texture(tex, v_texcoord - vec2(0.0, texel.y)).x;
+    fragColor = vec4(texture(uVel, v_texcoord).xy - vec2(R - L, T - B), 0.0, 1.0);
 }
 )GLSL"},
 

@@ -43,6 +43,28 @@ struct SGlassUniforms {
     GLint invRoundingPower = -1;
     GLint radii = -1; // per-corner radius: top-left, top-right, bottom-right, bottom-left
 
+
+    GLint lightPos = -1;
+    GLint lightA = -1;
+    GLint lightB = -1;
+    GLint lightColor = -1;
+    GLint glowPoint = -1;
+    GLint glowC = -1;
+    GLint materialize = -1;
+    GLint boxPos = -1;
+    GLint parallax = -1;
+    GLint oilA = -1;
+    GLint oilB = -1;
+
+    // Liquid Touch (windows only)
+    GLint liqOn = -1;
+    GLint liqDye = -1;
+    GLint liqVel = -1;
+    GLint liqDisp = -1;
+    GLint liqTexel = -1;
+    GLint liqA = -1;
+    GLint liqGlints = -1;
+    
     // Layers only: temp FBO surface mask for content-aware glass
     GLint maskTex = -1;
     GLint useMask = -1;
