@@ -887,12 +887,14 @@ void main() {
         float dShadow = length(max(qShadow, 0.0)) + min(max(qShadow.x, qShadow.y), 0.0) - r;
         cardShade = max(cardShade, 1.0 - smoothstep(-CARD_SHADOW_SOFT_PX * monitorScale, CARD_SHADOW_SOFT_PX * monitorScale, dShadow));
         cardCover = max(cardCover, 1.0 - smoothstep(-0.75, 0.75, d));
-        if (d > 0.0 || cardRim > 0.0)
+        // Half a pixel past the edge as well: the light has to antialias along with the card, or it
+        // stair-steps round the curves.
+        if (d > 0.75 || cardRim > 0.0)
             continue;
         vec2 n = q.x > 0.0 && q.y > 0.0 ? normalize(q) : (q.x > q.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
         cardNormal = n * sign(local);
-        cardRim    = exp(d / (1.6 * monitorScale));
-        cardDepthPx = -d;
+        cardRim    = exp(min(d, 0.0) / (1.6 * monitorScale)) * (1.0 - smoothstep(-0.75, 0.75, d));
+        cardDepthPx = max(-d, 0.0);
         cardCentre = centre;
         cardAcross = local / half_;
         vec2 bend  = -cardNormal * exp(d / 9.0) * cardLook.x * invFullSize;
@@ -1102,12 +1104,12 @@ void main() {
         // A bright line on the lit edge, its echo on the far one, and next to nothing on the sides.
         float line = cardRim * (lit * lit + CARD_ECHO * away * away + 0.08);
         float glow = exp(-cardDepthPx / (9.0 * monitorScale)) * lit * lit * 0.2;
-        color += vec3(1.0, 0.99, 0.97) * cardLook.z * (line + glow);
+        color += vec3(1.0, 0.99, 0.97) * cardLook.z * (line + glow * cardCover);
 
         // The sheen falls from the lit side across the card, and the far edge sits in its own shade.
         float across = clamp(dot(cardAcross, dir) * 0.5 + 0.5, 0.0, 1.0);
-        color += vec3(1.0, 0.99, 0.97) * cardDepth.x * across * across;
-        color *= 1.0 - cardDepth.y * 0.5 * away * exp(-cardDepthPx / (10.0 * monitorScale));
+        color += vec3(1.0, 0.99, 0.97) * cardDepth.x * across * across * cardCover;
+        color *= 1.0 - cardDepth.y * 0.5 * away * exp(-cardDepthPx / (10.0 * monitorScale)) * cardCover;
     }
 #endif
 
