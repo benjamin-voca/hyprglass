@@ -579,9 +579,12 @@ void main() {
         // Look further in along the normal. A panel keeps getting deeper; a strip ends at
         // the screen edge, where the depth stops growing, so its rim can bend nothing.
         // This is what lets a wide lens on panels share one outline with a thin frame.
-        // Measured square, not round: along a corner's diagonal a round look gains only 0.7 of its
-        // length in depth from either edge, which reads as a strip and cuts a wedge out of the rim.
-        vec2  look     = inwardDir / max(max(abs(inwardDir.x), abs(inwardDir.y)), 0.5) * contourThinPx * 2.0 * invFullSize;
+        // Anywhere round a corner the look goes the full length along both axes. A look along the
+        // normal gains too little depth from the nearer edge on the way, which reads as a strip and
+        // cuts wedges out of the rim. A strip's own edge has a straight normal, so it is not affected.
+        vec2  inwardAbs = abs(inwardDir);
+        float turned    = smoothstep(0.0, 0.5, min(inwardAbs.x, inwardAbs.y) / max(max(inwardAbs.x, inwardAbs.y), 0.5));
+        vec2  look      = sign(inwardDir) * (inwardAbs.x > inwardAbs.y ? vec2(1.0, turned) : vec2(turned, 1.0)) * contourThinPx * 2.0 * invFullSize;
         vec3  ahead    = texture(contourTex, (uv + look) * contourUVScale).rgb;
         float aheadLen = length(ahead.gb);
         // Next to a panel's corner the look is cut short as well, but by the edge to the side,
