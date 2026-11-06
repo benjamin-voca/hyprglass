@@ -278,7 +278,7 @@ void CGlassLayerSurface::damagePanels() {
         return;
 
     const auto position = layerSurface->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
-    for (const auto& rect : resource->m_current.input.getRects()) {
+    for (const auto& rect : resource->m_current.effectiveInputRegion().getRects()) {
         const double w = rect.x2 - rect.x1, h = rect.y2 - rect.y1;
         if (std::min(w, h) < 120.0)
             continue;
@@ -638,13 +638,14 @@ int CGlassLayerSurface::frostBoxes(const PHLMONITOR& monitor, const float* windo
     if (!resource)
         return 0;
 
-    // A shell's input region is its panels, and only a panel over a window frosts at all. The
+    // A shell's input region is its panels, and only a panel over a window frosts at all. A surface
+    // that never set a region takes input everywhere, which the state keeps apart from its rects. The
     // shader thins the frost out with distance from the window, slowly enough to leave no seam.
     // The margin keeps the mask's soft edge outside the panel.
     const float scale  = monitor->m_scale;
     const float margin = 60.0f * scale;
     int         count  = 0;
-    for (const auto& rect : resource->m_current.input.getRects()) {
+    for (const auto& rect : resource->m_current.effectiveInputRegion().getRects()) {
         if (count >= maxRects)
             break;
         const float x1 = rect.x1 * scale, y1 = rect.y1 * scale, x2 = rect.x2 * scale, y2 = rect.y2 * scale;
