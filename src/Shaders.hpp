@@ -559,6 +559,11 @@ void main() {
     // fast. A strong bend there pinches into pointed folds, so it fades out toward that edge.
     float edgeFadeNearBox = smoothstep(14.0, 120.0, min(boxPx.x, boxPx.y));
     edgeProximity *= boxFade * edgeFadeNearBox;
+#ifdef HYPRGLASS_FEATURE_FROST
+    // The rim stays clear, as a bend has nothing to bend in a blurred backdrop: a thick clear
+    // edge around a frosted middle, which is also where the panel's text sits.
+    frostHere *= 1.0 - smoothstep(0.3, 0.8, edgeProximity);
+#endif
 #else
     float bevelSdf = roundingPower == 2.0 ? getBevelSDF(uv) : cornerSdf;
     float edgeProximity = min(exp(bevelSdf * invBezelWidthPx), 1.0);
@@ -1312,9 +1317,11 @@ void main() {
     a = boosted;
 
     // Window buttons are drawn thin and dim for an opaque frame. On glass they would vanish.
-    if (splitPx > 0.0 && px.y < splitPx && px.x > fullSize.x - splitPx * 5.0 && a > 0.02) {
-        float strong = min(a * 1.9, 1.0);
-        foreground   = mix(foreground / max(a, 0.001), vec3(0.95), 0.8) * strong;
+    if (splitPx > 0.0 && px.y < splitPx && px.x > fullSize.x - splitPx * 5.0) {
+        // Glyphs only: the frame has a faint veil of its own there, which must not light up.
+        float glyph  = smoothstep(0.1, 0.24, a);
+        float strong = mix(a, min(a * 1.9, 1.0), glyph);
+        foreground   = mix(foreground / max(a, 0.001), vec3(0.95), 0.8 * glyph) * strong;
         a            = strong;
     }
     fragColor = vec4(foreground + frame * keepAlpha * (1.0 - a), a + keepAlpha * (1.0 - a)) * cornerAlpha * alpha;
