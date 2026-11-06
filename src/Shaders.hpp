@@ -184,7 +184,8 @@ uniform float contourStripDim;    // how far strips darken what is bright behind
 uniform float contourStripBevel;  // how much of bevel_strength a strip keeps: a frame stays quieter than a panel's rim
 uniform float contourRimFloor;    // how much of its highlight a rim keeps facing away from the light
 const float LAYER_LIGHT_HEIGHT = 500.0; // logical px over the glass
-const float SOFT_NORMAL_REACH_PX = 56.0; // logical px along the edge, each way
+const float SOFT_NORMAL_REACH_PX = 56.0; // logical px each way along both axes: the span a corner's normal turns over
+const float SOFT_DEPTH_ROUND_PX = 10.0; // and the crease in the distance rounds off over about twice this
 uniform vec4  cardRects[24];      // hg.cards(), framebuffer px within the layer: x0, y0, x1, y1
 uniform float cardRadii[24];
 uniform int   cardCount;
@@ -578,7 +579,10 @@ void main() {
         // Look further in along the normal. A panel keeps getting deeper; a strip ends at
         // the screen edge, where the depth stops growing, so its rim can bend nothing.
         // This is what lets a wide lens on panels share one outline with a thin frame.
-        vec3  ahead    = texture(contourTex, (uv + inwardDir * contourThinPx * 2.0 * invFullSize) * contourUVScale).rgb;
+        // Measured square, not round: along a corner's diagonal a round look gains only 0.7 of its
+        // length in depth from either edge, which reads as a strip and cuts a wedge out of the rim.
+        vec2  look     = inwardDir / max(max(abs(inwardDir.x), abs(inwardDir.y)), 0.5) * contourThinPx * 2.0 * invFullSize;
+        vec3  ahead    = texture(contourTex, (uv + look) * contourUVScale).rgb;
         float aheadLen = length(ahead.gb);
         // Next to a panel's corner the look is cut short as well, but by the edge to the side,
         // which faces across the look. A strip's far side faces along it. Without this a panel
@@ -588,7 +592,7 @@ void main() {
         float along = contourGradLen > 0.05 && aheadLen > 0.05 ? abs(dot(ahead.gb / aheadLen, inwardDir)) : 1.0;
         float depthAhead = -ahead.r;
         if (along < 0.8) {
-            vec2  lookAt = uv + inwardDir * contourThinPx * 2.0 * invFullSize;
+            vec2  lookAt = uv + look;
             vec2  side   = vec2(-inwardDir.y, inwardDir.x) * contourThinPx * 1.5 * invFullSize;
             float roomy  = max(-texture(contourTex, (lookAt + side) * contourUVScale).r,
                                -texture(contourTex, (lookAt - side) * contourUVScale).r);
@@ -598,23 +602,40 @@ void main() {
         stripHere = 1.0 - smoothstep(contourThinPx * 1.5, contourThinPx * 1.95, depthAhead);
         edgeProximity *= thinGate;
     }
-    // Where the field folds, past the corner of a panel, its direction flips across a line
-    // and a bend there draws a streak. The smoothed gradient goes weak exactly there.
-    edgeProximity *= smoothstep(0.2, 0.8, contourGradLen);
     // Panels meet the frame near the screen edge, in a tight concave fillet whose normal swings
     // fast. A strong bend there pinches into pointed folds, so it fades out toward that edge.
     float edgeFadeNearBox = smoothstep(14.0, 120.0, min(boxPx.x, boxPx.y));
     edgeProximity *= boxFade * edgeFadeNearBox;
-    // Deeper than a tight corner's own radius, the normal flips across the corner's diagonal: a
-    // bend there folds into a wedge, and a sharp light stops dead on a straight line. Reading the
-    // normal further along the edge as well turns it over a longer stretch, as the wider radius
-    // in lightNormal() does for a window's box.
+    // Deeper than a tight corner's own radius, the field folds along the corner's diagonal: its
+    // normal flips there and its distance has a crease, so a bend folds into a wedge and a sharp
+    // light stops dead on a straight line. Measuring both over a wider span turns the normal over
+    // a longer stretch, as the wider radius in lightNormal() does for a window's box, and rounds
+    // the crease off. Panels are made of straight axis-aligned edges, which is what this assumes.
     vec2 softOutward = contourOutward;
     if (edgeProximity > 0.005) {
-        vec2 side = vec2(-contourOutward.y, contourOutward.x) * SOFT_NORMAL_REACH_PX * monitorScale * invFullSize;
-        softOutward += texture(contourTex, (uv + side) * contourUVScale).gb + texture(contourTex, (uv - side) * contourUVScale).gb;
-        softOutward = dot(softOutward, softOutward) > 1e-4 ? normalize(softOutward) : contourOutward;
-        inwardDir = -softOutward;
+        float reachPx = SOFT_NORMAL_REACH_PX * monitorScale;
+        vec2  acrossX = vec2(reachPx * invFullSize.x, 0.0);
+        vec2  acrossY = vec2(0.0, reachPx * invFullSize.y);
+        float left    = texture(contourTex, (uv - acrossX) * contourUVScale).r;
+        float right   = texture(contourTex, (uv + acrossX) * contourUVScale).r;
+        float up      = texture(contourTex, (uv - acrossY) * contourUVScale).r;
+        float down    = texture(contourTex, (uv + acrossY) * contourUVScale).r;
+        vec2  slope   = vec2(right - left, down - up) / (2.0 * reachPx);
+        float slopeLen = length(slope);
+        if (slopeLen > 1e-3) {
+            softOutward = slope / slopeLen;
+            inwardDir   = -softOutward;
+        }
+        // A thin card folds along its middle too, where the two sides cancel out and a bend has no
+        // way to go. A corner's diagonal keeps a clear slope, so its rim runs on round it.
+        edgeProximity *= smoothstep(0.15, 0.45, slopeLen);
+
+        // The depth to each pair of edges, and the smooth minimum of the two instead of the crease.
+        float depthX = reachPx - max(left, right);
+        float depthY = reachPx - max(up, down);
+        float k      = SOFT_DEPTH_ROUND_PX * monitorScale;
+        float lift   = k * log(exp((-bevelSdf - depthX) / k) + exp((-bevelSdf - depthY) / k));
+        edgeProximity = min(edgeProximity * exp(max(lift, 0.0) * invBezelWidthPx), 1.0);
     }
 #ifdef HYPRGLASS_FEATURE_FROST
     // The rim stays clear, as a bend has nothing to bend in a blurred backdrop: a thick clear
@@ -1049,7 +1070,7 @@ void main() {
     if (specularStrength > 0.001) {
 #ifdef HYPRGLASS_FEATURE_CONTOUR
         // the edge facing the light, like the top of a box at angle 0
-        float specT = max(clamp(0.5 + 0.5 * dot(contourOutward, lightDir(specularAngle)), 0.0, 1.0), contourRimFloor);
+        float specT = max(clamp(0.5 + 0.5 * dot(softOutward, lightDir(specularAngle)), 0.0, 1.0), contourRimFloor);
 #else
         float specT = max(1.0 - glassUV.y, 0.0);
         if (abs(specularAngle) > 0.001) {
@@ -1102,7 +1123,7 @@ void main() {
     {
 #ifdef HYPRGLASS_FEATURE_CONTOUR
         // the edge facing away from the light: 1 at the bottom, a quarter at the sides, like a box
-        float bottomBias = pow(0.5 + 0.5 * contourOutward.y, 2.0);
+        float bottomBias = pow(0.5 + 0.5 * softOutward.y, 2.0);
 #else
         // max(): item fragments just above the glass box have glassUV.y < 0, where pow() is undefined
         float bottomBias = pow(max(glassUV.y, 0.0), 2.0);
