@@ -111,6 +111,7 @@ bool CShaderManager::compileGlassProgram(SGlassProgram& glass, GlassFeatureMask 
     glassUniforms.contourReferencePx    = glGetUniformLocation(program, "contourReferencePx");
     glassUniforms.contourReachPx        = glGetUniformLocation(program, "contourReachPx");
     glassUniforms.contourThinPx         = glGetUniformLocation(program, "contourThinPx");
+    glassUniforms.contourBoxOutline     = glGetUniformLocation(program, "contourBoxOutline");
     glassUniforms.contourStripDim       = glGetUniformLocation(program, "contourStripDim");
     glassUniforms.contourStripBevel     = glGetUniformLocation(program, "contourStripBevel");
     glassUniforms.contourRimFloor       = glGetUniformLocation(program, "contourRimFloor");

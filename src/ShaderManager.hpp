@@ -105,6 +105,7 @@ struct SGlassUniforms {
     GLint contourReferencePx = -1;
     GLint contourReachPx     = -1;
     GLint contourThinPx      = -1;
+    GLint contourBoxOutline  = -1;
     GLint contourStripDim    = -1;
     GLint contourStripBevel  = -1;
     GLint contourRimFloor    = -1;

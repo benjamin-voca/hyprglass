@@ -186,6 +186,17 @@ uniform float contourRimFloor;    // how much of its highlight a rim keeps facin
 const float LAYER_LIGHT_HEIGHT = 500.0; // logical px over the glass
 const float SOFT_NORMAL_REACH_PX = 56.0; // logical px each way along both axes: the span a corner's normal turns over
 const float SOFT_DEPTH_ROUND_PX = 10.0; // and the crease in the distance rounds off over about twice this
+uniform vec4  contourBoxOutline;  // 1 on a side of the layer's box that stops short of the screen: left, top, right, bottom
+// A layer can be its own box, like a launcher that fills its surface. Along a straight side its alpha
+// never falls, so the field alone sees no edge there: a side that is not the screen's edge is one.
+float contourBoxSide(vec2 at) {
+    vec2 nearSide = at * fullSize + (1.0 - contourBoxOutline.xy) * 1e5;
+    vec2 farSide  = (1.0 - at) * fullSize + (1.0 - contourBoxOutline.zw) * 1e5;
+    return min(min(nearSide.x, nearSide.y), min(farSide.x, farSide.y));
+}
+float contourDistanceAt(vec2 at) {
+    return max(texture(contourTex, at * contourUVScale).r, -contourBoxSide(at));
+}
 uniform vec4  cardRects[24];      // hg.cards(), framebuffer px within the layer: x0, y0, x1, y1
 uniform float cardRadii[24];
 uniform int   cardCount;
@@ -511,6 +522,14 @@ void main() {
     // The traced outline replaces the layer box. The mask above already limits the glass
     // to the visible content, so the outline only shapes the edge effects, not the cut.
     vec4  contourSample  = texture(contourTex, uv * contourUVScale);
+    if (-contourBoxSide(uv) > contourSample.r) {
+        vec2 stepX = vec2(invFullSize.x, 0.0);
+        vec2 stepY = vec2(0.0, invFullSize.y);
+        vec2 toSide = vec2(contourBoxSide(uv - stepX) - contourBoxSide(uv + stepX), contourBoxSide(uv - stepY) - contourBoxSide(uv + stepY));
+        if (dot(toSide, toSide) > 1e-4)
+            contourSample.gb = normalize(toSide);
+        contourSample.r = -contourBoxSide(uv);
+    }
     float cornerSdf      = contourSample.r;
     float cornerAlpha    = 1.0;
     float contourGradLen = length(contourSample.gb);
@@ -567,7 +586,7 @@ void main() {
 #ifdef HYPRGLASS_FEATURE_CONTOUR
     // The field's data ends at the layer box, and its distances collapse there. That is the
     // screen edge, not an outline, so nothing may light it.
-    vec2  boxPx   = min(uv, 1.0 - uv) * fullSize;
+    vec2  boxPx   = min(uv * fullSize + contourBoxOutline.xy * 1e5, (1.0 - uv) * fullSize + contourBoxOutline.zw * 1e5);
     float boxFade = smoothstep(2.0, 10.0, min(boxPx.x, boxPx.y));
     // The field is smoothed, so it has no corner seam to avoid. Its reach is the end of the
     // data: the window takes the effects to zero before it, rather than cutting them off.
@@ -586,6 +605,7 @@ void main() {
         float turned    = smoothstep(0.0, 0.5, min(inwardAbs.x, inwardAbs.y) / max(max(inwardAbs.x, inwardAbs.y), 0.5));
         vec2  look      = sign(inwardDir) * (inwardAbs.x > inwardAbs.y ? vec2(1.0, turned) : vec2(turned, 1.0)) * contourThinPx * 2.0 * invFullSize;
         vec3  ahead    = texture(contourTex, (uv + look) * contourUVScale).rgb;
+        ahead.r        = max(ahead.r, -contourBoxSide(uv + look));
         float aheadLen = length(ahead.gb);
         // Next to a panel's corner the look is cut short as well, but by the edge to the side,
         // which faces across the look. A strip's far side faces along it. Without this a panel
@@ -597,12 +617,14 @@ void main() {
         if (along < 0.8) {
             vec2  lookAt = uv + look;
             vec2  side   = vec2(-inwardDir.y, inwardDir.x) * contourThinPx * 1.5 * invFullSize;
-            float roomy  = max(-texture(contourTex, (lookAt + side) * contourUVScale).r,
-                               -texture(contourTex, (lookAt - side) * contourUVScale).r);
+            float roomy  = max(-contourDistanceAt(lookAt + side), -contourDistanceAt(lookAt - side));
             depthAhead = mix(max(depthAhead, roomy), depthAhead, smoothstep(0.4, 0.8, along));
         }
+        // A point this deep is no strip, whatever the look lands on: from the middle of a short panel
+        // it lands near the far edge, and the strip's dimming drew a dark capsule along the fold.
+        depthAhead = max(depthAhead, -bevelSdf * 2.0);
         thinGate = smoothstep(contourThinPx, contourThinPx * 1.75, depthAhead);
-        stripHere = 1.0 - smoothstep(contourThinPx * 1.5, contourThinPx * 1.95, depthAhead);
+        stripHere = 1.0 - smoothstep(contourThinPx, contourThinPx * 1.4, depthAhead);
         edgeProximity *= thinGate;
     }
     // Panels meet the frame near the screen edge, in a tight concave fillet whose normal swings
@@ -619,10 +641,10 @@ void main() {
         float reachPx = SOFT_NORMAL_REACH_PX * monitorScale;
         vec2  acrossX = vec2(reachPx * invFullSize.x, 0.0);
         vec2  acrossY = vec2(0.0, reachPx * invFullSize.y);
-        float left    = texture(contourTex, (uv - acrossX) * contourUVScale).r;
-        float right   = texture(contourTex, (uv + acrossX) * contourUVScale).r;
-        float up      = texture(contourTex, (uv - acrossY) * contourUVScale).r;
-        float down    = texture(contourTex, (uv + acrossY) * contourUVScale).r;
+        float left    = contourDistanceAt(uv - acrossX);
+        float right   = contourDistanceAt(uv + acrossX);
+        float up      = contourDistanceAt(uv - acrossY);
+        float down    = contourDistanceAt(uv + acrossY);
         vec2  slope   = vec2(right - left, down - up) / (2.0 * reachPx);
         float slopeLen = length(slope);
         if (slopeLen > 1e-3) {

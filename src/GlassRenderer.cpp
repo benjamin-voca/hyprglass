@@ -660,6 +660,9 @@ void applyGlassEffect(Render::CRenderContext& ctx,
         const auto  thinMonitor = ctx.m_data.pMonitor.lock();
         const float thinScale   = thinMonitor ? static_cast<float>(thinMonitor->m_scale) : 1.0f;
         const auto& thinConfig  = g_pGlobalState->config;
+        const Vector2D screenPx = thinMonitor ? thinMonitor->m_transformedSize : Vector2D{};
+        glUniform4f(uniforms.contourBoxOutline, box.x > 1.0 ? 1.0f : 0.0f, box.y > 1.0 ? 1.0f : 0.0f,
+                    box.x + box.w < screenPx.x - 1.0 ? 1.0f : 0.0f, box.y + box.h < screenPx.y - 1.0 ? 1.0f : 0.0f);
         glUniform1f(uniforms.contourThinPx, thinConfig.contourThinPx ? static_cast<float>(**thinConfig.contourThinPx) * thinScale : 0.0f);
         glUniform1f(uniforms.contourStripDim, thinConfig.contourStripDim ? static_cast<float>(**thinConfig.contourStripDim) : 0.0f);
         glUniform1f(uniforms.contourStripBevel, thinConfig.contourStripBevel ? static_cast<float>(**thinConfig.contourStripBevel) : 1.0f);
