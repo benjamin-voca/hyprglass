@@ -179,6 +179,9 @@ uniform float contourReferencePx; // the bezel is a fraction of this, not of the
 uniform float contourReachPx;     // where the field stops; the edge effects fade out before it
 uniform float contourThinPx;      // strips thinner than this keep no edge effects, framebuffer px (0 = off)
 uniform float contourStripDim;    // how far strips darken what is bright behind them, so small text holds
+uniform float contourStripBevel;  // how much of bevel_strength a strip keeps: a frame stays quieter than a panel's rim
+uniform float contourRimFloor;    // how much of its highlight a rim keeps facing away from the light
+const float LAYER_LIGHT_HEIGHT = 500.0; // logical px over the glass
 uniform vec4  cardRects[24];      // hg.cards(), framebuffer px within the layer: x0, y0, x1, y1
 uniform float cardRadii[24];
 uniform int   cardCount;
@@ -221,7 +224,11 @@ vec4 sampleBlurred(vec2 wuv) {
         vec2 d = max(frostWindows[i].xy - at, at - frostWindows[i].zw);
         here = max(here, frostAmount * (1.0 - smoothstep(-6.0, 6.0, max(d.x, d.y))));
     }
-    return mix(texture(tex, tuv), texture(frostTex, tuv), here);
+    // The frost is wide enough to reach the padding, which is cleared to nothing past the screen
+    // edge. Dividing by its alpha keeps only what was there, so a panel's edge at the screen stays lit.
+    vec4 frosted = texture(frostTex, tuv);
+    frosted = vec4(frosted.rgb / max(frosted.a, 0.02), 1.0);
+    return mix(texture(tex, tuv), frosted, here);
 #else
     return mix(texture(tex, tuv), texture(frostTex, tuv), frostAmount);
 #endif
@@ -557,9 +564,16 @@ void main() {
         // Look further in along the normal. A panel keeps getting deeper; a strip ends at
         // the screen edge, where the depth stops growing, so its rim can bend nothing.
         // This is what lets a wide lens on panels share one outline with a thin frame.
-        float ahead = texture(contourTex, (uv + inwardDir * contourThinPx * 2.0 * invFullSize) * contourUVScale).r;
-        thinGate = smoothstep(contourThinPx, contourThinPx * 1.75, -ahead);
-        stripHere = 1.0 - smoothstep(contourThinPx * 1.5, contourThinPx * 1.95, -ahead);
+        vec3  ahead    = texture(contourTex, (uv + inwardDir * contourThinPx * 2.0 * invFullSize) * contourUVScale).rgb;
+        float aheadLen = length(ahead.gb);
+        // Next to a panel's corner the look is cut short as well, but by the edge to the side,
+        // which faces across the look. A strip's far side faces along it. Without this a panel
+        // loses its rim around each corner, and keeps a streak along the diagonal, where the
+        // depth does go on growing.
+        float along = contourGradLen > 0.05 && aheadLen > 0.05 ? abs(dot(ahead.gb / aheadLen, inwardDir)) : 1.0;
+        float depthAhead = mix(contourThinPx * 2.0, -ahead.r, smoothstep(0.4, 0.8, along));
+        thinGate = smoothstep(contourThinPx, contourThinPx * 1.75, depthAhead);
+        stripHere = 1.0 - smoothstep(contourThinPx * 1.5, contourThinPx * 1.95, depthAhead);
         edgeProximity *= thinGate;
     }
     // Where the field folds, past the corner of a panel, its direction flips across a line
@@ -595,17 +609,32 @@ void main() {
         // one direction per window (from its centre), like sunlight: a per-pixel
         // direction fans out into a pointed cone when the light sits near an edge
         vec2  toL = lightPos - (boxPos + 0.5 * fullSize);
-#ifdef HYPRGLASS_FEATURE_CONTOUR
-        vec2  n   = contourOutward;   // a traced outline has its own normal, and no box corners
-#else
-        vec2  n   = lightNormal(uv, max(pickCornerRadius((uv - 0.5) * fullSize, radii), lightA.z * 6.0));
-#endif
-        vec2  L   = length(toL) > 1.0 ? normalize(toL) : vec2(0.0, -1.0);
-        float ndl = dot(n, L);
         float rim = exp(bevelSdf / max(lightA.z, 1.0)) * thinGate * (1.0 - stripHere);  // 1 at the edge, fading inward
 #ifdef HYPRGLASS_FEATURE_CONTOUR
         rim *= edgeFadeNearBox; // ends softly before the frame, like the bend
+        // A traced corner can be tight, and a sharp light would stop dead partway round it, on a
+        // straight line. Reading the normal further along the edge as well turns it over a longer
+        // stretch, as the wider radius in lightNormal() does for a window's box.
+        vec2  n = contourOutward;
+        if (rim > 0.002) {
+            vec2 along = vec2(-contourOutward.y, contourOutward.x) * lightA.z * 4.0 * invFullSize;
+            n += texture(contourTex, (uv + along) * contourUVScale).gb + texture(contourTex, (uv - along) * contourUVScale).gb;
+            n = dot(n, n) > 1e-4 ? normalize(n) : contourOutward;
+        }
+#else
+        vec2  n   = lightNormal(uv, max(pickCornerRadius((uv - 0.5) * fullSize, radii), lightA.z * 6.0));
 #endif
+#ifdef HYPRGLASS_FEATURE_CONTOUR
+        // A traced layer spans the monitor, and its centre says nothing about a panel at one side
+        // of it. So the light is taken from each point, and from above the glass: close under
+        // it a rim gets none, where a flat direction would draw a pointed cone.
+        toL = lightPos - (boxPos + uv * fullSize);
+        float height = LAYER_LIGHT_HEIGHT * monitorScale;
+        vec2  L   = toL / sqrt(dot(toL, toL) + height * height);
+#else
+        vec2  L   = length(toL) > 1.0 ? normalize(toL) : vec2(0.0, -1.0);
+#endif
+        float ndl = dot(n, L);
         float lit = pow(max(ndl, 0.0), lightA.y);
         float far = pow(max(-ndl, 0.0), lightA.y) * lightA.w;
         lightAmt  = (lit + far) * rim * lightA.x;
@@ -930,12 +959,13 @@ void main() {
         float tail = sizePx;
         float ring = (1.0 - smoothstep(-core, 0.0, cornerSdf)) * smoothstep(-tail, -core, cornerSdf);
 #ifdef HYPRGLASS_FEATURE_CONTOUR
-        ring *= boxFade;
+        ring *= boxFade * mix(1.0, contourStripBevel, stripHere);
 #endif
 
         // lit side faces the light, the far side fades out and can be shadowed
 #ifdef HYPRGLASS_FEATURE_CONTOUR
-        float facing = clamp(dot(contourOutward, lightDir(bevelAngle)) * 0.5 + 0.5, 0.0, 1.0);
+        // A panel hanging off the top of the screen shows only the edges facing away from the light.
+        float facing = max(clamp(dot(contourOutward, lightDir(bevelAngle)) * 0.5 + 0.5, 0.0, 1.0), contourRimFloor * (1.0 - stripHere));
 #else
         float facing = clamp(dot(sdfOutwardNormal(uv), lightDir(bevelAngle)) * 0.5 + 0.5, 0.0, 1.0);
 #endif
@@ -984,7 +1014,7 @@ void main() {
     if (specularStrength > 0.001) {
 #ifdef HYPRGLASS_FEATURE_CONTOUR
         // the edge facing the light, like the top of a box at angle 0
-        float specT = clamp(0.5 + 0.5 * dot(contourOutward, lightDir(specularAngle)), 0.0, 1.0);
+        float specT = max(clamp(0.5 + 0.5 * dot(contourOutward, lightDir(specularAngle)), 0.0, 1.0), contourRimFloor);
 #else
         float specT = max(1.0 - glassUV.y, 0.0);
         if (abs(specularAngle) > 0.001) {

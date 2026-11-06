@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <hyprland/src/desktop/DesktopTypes.hpp>
@@ -35,6 +36,27 @@ inline constexpr int BLUR_ITERATIONS = 2;
 // radius finite.
 inline constexpr float BLUR_MAX = 10.0f;
 
+// The blur shader reads at most 8 texels each way, so a radius past that stops widening and
+// only flattens the kernel. A panel's frost has to swallow the edge of a whole window, so its
+// copy shrinks until the radius fits. It also costs less than a half-size blur.
+inline constexpr int   COPY_DIVISOR         = 2;
+inline constexpr int   WIDE_COPY_DIVISOR_MAX = 16;
+inline constexpr float WIDE_RADIUS_MAX      = 8.0f;
+
+// radiusPx: the blur wanted, in the sample's own px.
+[[nodiscard]] constexpr int wideCopyDivisor(float radiusPx) noexcept {
+    int divisor = COPY_DIVISOR;
+    while (radiusPx / static_cast<float>(divisor) > WIDE_RADIUS_MAX && divisor < WIDE_COPY_DIVISOR_MAX)
+        divisor *= 2;
+    return divisor;
+}
+
+static_assert(wideCopyDivisor(0.0f) == 2);
+static_assert(wideCopyDivisor(16.0f) == 2);
+static_assert(wideCopyDivisor(17.0f) == 4);
+static_assert(wideCopyDivisor(108.0f) == 16);
+static_assert(wideCopyDivisor(10000.0f) == 16);
+
 // Smoothstep between the dead zone and the full mark.
 [[nodiscard]] constexpr float amountForCoverage(float coverage) noexcept {
     const float t = std::clamp((coverage - COVERAGE_DEAD_ZONE) / (COVERAGE_FULL - COVERAGE_DEAD_ZONE), 0.0f, 1.0f);
@@ -58,6 +80,9 @@ static_assert(amountForCoverage(0.5f * (COVERAGE_DEAD_ZONE + COVERAGE_FULL)) > 0
 // The boxes of the windows drawn on `monitor`, as x0, y0, x1, y1 relative to `layerBox`,
 // for a layer that spans them. Returns how many of `maxRects` it filled.
 [[nodiscard]] int visibleWindowRects(const PHLMONITOR& monitor, const CBox& layerBox, float* out, int maxRects);
+
+// The sizes between the sample and a wide copy, each half of the one before.
+using CopyStages = std::array<SP<Render::IFramebuffer>, 3>;
 
 // One window's frost: the eased amount and the frosted copy of its sample.
 class CFrostState {
@@ -97,13 +122,13 @@ class CFrostState {
     // The sample was refreshed: the copy no longer matches it.
     void sampleChanged() noexcept { m_copyStale = true; }
 
-    // True when the copy is missing, stale, built with another radius, or not half the
-    // size of `sample`.
-    [[nodiscard]] bool needsBuild(const SP<Render::IFramebuffer>& sample, float radius) const {
+    // True when the copy is missing, stale, built with another radius, or not `divisor`
+    // times smaller than `sample`.
+    [[nodiscard]] bool needsBuild(const SP<Render::IFramebuffer>& sample, float radius, int divisor = COPY_DIVISOR) const {
         if (!m_copy || m_copyStale || radius != m_builtRadius || !sample)
             return true;
-        return m_copy->m_size.x != std::max(1, static_cast<int>(sample->m_size.x) / 2) ||
-               m_copy->m_size.y != std::max(1, static_cast<int>(sample->m_size.y) / 2);
+        return m_copy->m_size.x != std::max(1, static_cast<int>(sample->m_size.x) / divisor) ||
+               m_copy->m_size.y != std::max(1, static_cast<int>(sample->m_size.y) / divisor);
     }
 
     void built(float radius) noexcept {
@@ -115,6 +140,8 @@ class CFrostState {
     void releaseCopy() noexcept {
         m_copy.reset();
         m_temporary.reset();
+        for (auto& stage : m_stages)
+            stage.reset();
         m_copyStale = true;
     }
 
@@ -128,10 +155,12 @@ class CFrostState {
     // The framebuffers buildFrostCopy() fills.
     [[nodiscard]] SP<Render::IFramebuffer>& copy() noexcept { return m_copy; }
     [[nodiscard]] SP<Render::IFramebuffer>& temporary() noexcept { return m_temporary; }
+    [[nodiscard]] CopyStages&               stages() noexcept { return m_stages; }
 
   private:
     SP<Render::IFramebuffer>              m_copy;
     SP<Render::IFramebuffer>              m_temporary;
+    CopyStages                            m_stages;
     bool                                  m_copyStale   = true;
     float                                 m_builtRadius = 0.0f;
     float                                 m_amount      = 0.0f;

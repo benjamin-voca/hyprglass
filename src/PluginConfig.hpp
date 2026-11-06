@@ -142,6 +142,8 @@ inline constexpr auto CONTOUR_THIN_PX = "plugin:hyprglass:contour_thin_px";  // 
 // keyed to glass, with its background colour lifted out and its content kept.
 inline constexpr auto CONTOUR_FROST_DIM = "plugin:hyprglass:contour_frost_dim"; // traced layers: how far a bright window behind frosted glass is darkened
 inline constexpr auto CONTOUR_STRIP_DIM = "plugin:hyprglass:contour_strip_dim"; // traced layers: how far thin strips darken what is bright behind them
+inline constexpr auto CONTOUR_STRIP_BEVEL = "plugin:hyprglass:contour_strip_bevel"; // traced layers: how much of bevel_strength thin strips keep
+inline constexpr auto CONTOUR_RIM_FLOOR = "plugin:hyprglass:contour_rim_floor"; // traced layers: how much of its highlight a rim keeps facing away from the light
 inline constexpr auto LIGHT_FPS       = "plugin:hyprglass:light_fps";        // redraws per second while the cursor moves the light
 inline constexpr auto CARD_BEND       = "plugin:hyprglass:card_bend";        // hg.cards(): how far a card's rim bends the view, px
 inline constexpr auto CARD_CHROMA     = "plugin:hyprglass:card_chroma";      // hg.cards(): rainbow at that bend
@@ -485,6 +487,8 @@ struct SPluginConfig {
     Config::FLOAT* const* chromeOpacity = nullptr;
     Config::FLOAT* const* contourFrostDim = nullptr;
     Config::FLOAT* const* contourStripDim = nullptr;
+    Config::FLOAT* const* contourStripBevel = nullptr;
+    Config::FLOAT* const* contourRimFloor = nullptr;
     Config::FLOAT* const* lightFps = nullptr;
     Config::FLOAT* const* cardBend = nullptr;
     Config::FLOAT* const* cardChroma = nullptr;

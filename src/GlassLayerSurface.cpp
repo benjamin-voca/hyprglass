@@ -856,10 +856,13 @@ void CGlassLayerSurface::compositeAndRestore(Render::CRenderContext& ctx, PHLMON
             if (m_frost.amount() > Frost::MINIMUM_AMOUNT) {
                 const float blurStrength = resolvePresetFloat(resolveContext, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
                 const int   downscale    = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
-                // the copy is half the sample's size on top of the sample's own downscale
-                const float radius = resolvePresetFloat(resolveContext, &SPresetValues::frostBlur, &SOverridableConfig::frostBlur) * 12.0f / (2.0f * downscale);
+                // frost_blur means what it says here: the copy shrinks until the radius fits the kernel,
+                // on top of the sample's own downscale
+                const float wanted  = resolvePresetFloat(resolveContext, &SPresetValues::frostBlur, &SOverridableConfig::frostBlur) * 12.0f / downscale;
+                const int   divisor = Frost::wideCopyDivisor(wanted);
+                const float radius  = wanted / static_cast<float>(divisor);
 
-                if (m_frost.needsBuild(m_sampleFramebuffer, radius)) {
+                if (m_frost.needsBuild(m_sampleFramebuffer, radius, divisor)) {
                     float frostRadius     = radius;
                     int   frostIterations = Frost::BLUR_ITERATIONS;
                     if (const auto& cfg = g_pGlobalState->config; cfg.blurFold && **cfg.blurFold) {
@@ -867,11 +870,11 @@ void CGlassLayerSurface::compositeAndRestore(Render::CRenderContext& ctx, PHLMON
                         frostRadius     = folded.radius;
                         frostIterations = folded.iterations;
                     }
-                    if (GlassRenderer::buildFrostCopy(ctx, m_sampleFramebuffer, m_frost.copy(), m_frost.temporary(), frostRadius, frostIterations, target))
+                    if (GlassRenderer::buildFrostCopy(ctx, m_sampleFramebuffer, m_frost.copy(), m_frost.temporary(), frostRadius, frostIterations, target, divisor, &m_frost.stages()))
                         m_frost.built(radius);
                 }
 
-                if (!m_frost.needsBuild(m_sampleFramebuffer, radius))
+                if (!m_frost.needsBuild(m_sampleFramebuffer, radius, divisor))
                     frostInput = {m_frost.copy(), m_frost.amount()};
             } else {
                 m_frost.releaseCopy();

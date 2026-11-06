@@ -122,6 +122,8 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_OPACITY, Config::FLOAT{0.25f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_FROST_DIM, Config::FLOAT{0.1f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_STRIP_DIM, Config::FLOAT{0.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_STRIP_BEVEL, Config::FLOAT{1.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_RIM_FLOOR, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_FPS, Config::FLOAT{60.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_BEND, Config::FLOAT{8.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CARD_CHROMA, Config::FLOAT{0.4f});
@@ -415,6 +417,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.chromeOpacity = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_OPACITY);
     config.contourFrostDim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_FROST_DIM);
     config.contourStripDim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_STRIP_DIM);
+    config.contourStripBevel = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_STRIP_BEVEL);
+    config.contourRimFloor = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_RIM_FLOOR);
     config.lightFps = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIGHT_FPS);
     config.cardBend = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_BEND);
     config.cardChroma = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CARD_CHROMA);

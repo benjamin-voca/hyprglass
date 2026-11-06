@@ -404,27 +404,32 @@ void blurBackground(Render::CRenderContext& ctx, SP<Render::IFramebuffer> sample
 
 bool buildFrostCopy(Render::CRenderContext& ctx, const SP<Render::IFramebuffer>& sample, SP<Render::IFramebuffer>& copy,
                     SP<Render::IFramebuffer>& temporary, float radius, int iterations,
-                    const SP<Render::IFramebuffer>& callerFramebuffer) {
+                    const SP<Render::IFramebuffer>& callerFramebuffer, int divisor, Frost::CopyStages* stages) {
     if (!sample || !callerFramebuffer || !g_pGlobalState->shaderManager.isInitialized())
         return false;
 
     const int sampleWidth  = static_cast<int>(sample->m_size.x);
     const int sampleHeight = static_cast<int>(sample->m_size.y);
-    const int width        = std::max(1, sampleWidth / 2);
-    const int height       = std::max(1, sampleHeight / 2);
+    const int width        = std::max(1, sampleWidth / divisor);
+    const int height       = std::max(1, sampleHeight / divisor);
     if (sampleWidth < 1 || sampleHeight < 1)
         return false;
 
-    if (!copy)
-        copy = g_pHyprRenderer->createFB("hyprglass-frost");
-    if (copy->m_size.x != width || copy->m_size.y != height || copy->m_drmFormat != sample->m_drmFormat)
-        copy->alloc(width, height, sample->m_drmFormat);
+    const auto fit = [&](SP<Render::IFramebuffer>& target, const char* name, int w, int h) {
+        if (!target)
+            target = g_pHyprRenderer->createFB(name);
+        if (target->m_size.x != w || target->m_size.y != h || target->m_drmFormat != sample->m_drmFormat)
+            target->alloc(w, h, sample->m_drmFormat);
+        // Dropped, so the caller sees a missing copy and retries rather than drawing a texture-less one.
+        if (!target->isAllocated() || !target->getTexture()) {
+            target.reset();
+            return false;
+        }
+        return true;
+    };
 
-    // Dropped, so the caller sees a missing copy and retries rather than drawing a texture-less one.
-    if (!copy->isAllocated() || !copy->getTexture()) {
-        copy.reset();
+    if (!fit(copy, "hyprglass-frost", width, height))
         return false;
-    }
 
     // same as the sample blit: the render pass's damage scissor would clip it
     g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, false);
@@ -433,9 +438,31 @@ bool buildFrostCopy(Render::CRenderContext& ctx, const SP<Render::IFramebuffer>&
         Diagnostics::recordStateDesync("scissor on before the frost blit");
     }
 
-    g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sample));
-    g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(copy));
-    glBlitFramebuffer(0, 0, sampleWidth, sampleHeight, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    const auto blit = [&](const SP<Render::IFramebuffer>& from, int fromW, int fromH, const SP<Render::IFramebuffer>& to, int toW, int toH) {
+        g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, fbId(from));
+        g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(to));
+        glBlitFramebuffer(0, 0, fromW, fromH, 0, 0, toW, toH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    };
+
+    // Halved a step at a time: one blit straight to a small size reads only a few of the texels
+    // it covers, and text behind the glass would shimmer through the frost.
+    SP<Render::IFramebuffer> from  = sample;
+    int                      fromW = sampleWidth, fromH = sampleHeight;
+    if (stages) {
+        size_t stage = 0;
+        for (int step = 2; step < divisor && stage < stages->size(); step *= 2, ++stage) {
+            const int w = std::max(1, sampleWidth / step), h = std::max(1, sampleHeight / step);
+            if (!fit((*stages)[stage], "hyprglass-frost-stage", w, h)) {
+                g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(callerFramebuffer));
+                return false;
+            }
+            blit(from, fromW, fromH, (*stages)[stage], w, h);
+            from  = (*stages)[stage];
+            fromW = w;
+            fromH = h;
+        }
+    }
+    blit(from, fromW, fromH, copy, width, height);
 
     blurBackground(ctx, copy, radius, iterations, callerFramebuffer, &temporary);
 
@@ -635,6 +662,8 @@ void applyGlassEffect(Render::CRenderContext& ctx,
         const auto& thinConfig  = g_pGlobalState->config;
         glUniform1f(uniforms.contourThinPx, thinConfig.contourThinPx ? static_cast<float>(**thinConfig.contourThinPx) * thinScale : 0.0f);
         glUniform1f(uniforms.contourStripDim, thinConfig.contourStripDim ? static_cast<float>(**thinConfig.contourStripDim) : 0.0f);
+        glUniform1f(uniforms.contourStripBevel, thinConfig.contourStripBevel ? static_cast<float>(**thinConfig.contourStripBevel) : 1.0f);
+        glUniform1f(uniforms.contourRimFloor, thinConfig.contourRimFloor ? static_cast<float>(**thinConfig.contourRimFloor) : 0.0f);
         const int cards = mask->cardRects && mask->cardRadii ? std::min(mask->cardCount, 24) : 0;
         glUniform1i(uniforms.cardCount, cards);
         if (cards > 0) {
