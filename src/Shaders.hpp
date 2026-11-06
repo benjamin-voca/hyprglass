@@ -204,6 +204,8 @@ uniform vec3  cardLook;           // bend px, chroma, light
 uniform vec2  cardDepth;          // sheen across a card, shadow on the sheet around it
 const float CARD_SHADOW_DROP_PX = 3.0;  // logical px: the shadow falls this far below a card ...
 const float CARD_SHADOW_SOFT_PX = 14.0; // ... and blurs this far either side of its edge
+const float CARD_STRIP_HALF_PX = 21.0;  // logical px, half a card's short side: up to here it barely bends ...
+const float CARD_GLASS_HALF_PX = 30.0;  // ... and from here it bends in full
 const float CARD_ECHO = 0.35;           // the light's echo on a card's far edge, as it goes through the glass
 #endif
 
@@ -922,10 +924,14 @@ void main() {
         cardDepthPx = max(-d, 0.0);
         cardCentre = centre;
         cardAcross = local / half_;
-        vec2 bend  = -cardNormal * exp(d / 9.0) * cardLook.x * invFullSize;
-        uvR += bend * (1.0 - cardLook.y);
+        // A bar's pill is a strip, whatever else it is: rainbow there reads as fringing. A toast or
+        // anything bigger is a piece of glass with room for it.
+        float roomForBend = smoothstep(CARD_STRIP_HALF_PX, CARD_GLASS_HALF_PX, min(half_.x, half_.y) / monitorScale);
+        vec2  bend = -cardNormal * exp(d / 9.0) * cardLook.x * mix(0.2, 1.0, roomForBend) * invFullSize;
+        float chroma = cardLook.y * roomForBend;
+        uvR += bend * (1.0 - chroma);
         uvG += bend;
-        uvB += bend * (1.0 + cardLook.y);
+        uvB += bend * (1.0 + chroma);
         cardBends = cardLook.x > 0.001;
     }
 #endif
