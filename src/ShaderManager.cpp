@@ -237,8 +237,40 @@ const SChromeProgram* CShaderManager::chromeProgram() {
     m_chrome.keepAlpha     = glGetUniformLocation(program, "keepAlpha");
     m_chrome.alpha         = glGetUniformLocation(program, "alpha");
     m_chrome.splitPx       = glGetUniformLocation(program, "splitPx");
+    m_chrome.bodyPx        = glGetUniformLocation(program, "bodyPx");
+    m_chrome.corners       = glGetUniformLocation(program, "corners");
+    m_chrome.mode          = glGetUniformLocation(program, "mode");
+    m_chrome.hasBody       = glGetUniformLocation(program, "hasBody");
+    m_chrome.body          = glGetUniformLocation(program, "body");
     m_chromeCompiled       = true;
     return &m_chrome;
+}
+
+const SPageProgram* CShaderManager::pageProgram() {
+    if (m_pageCompiled)
+        return &m_page;
+    if (m_pageFailed)
+        return nullptr;
+
+    if (!m_page.shader->createProgram(g_pHyprOpenGL->m_shaders->TEXVERTSRC, loadShaderSource("pagecard.frag"), true, true)) {
+        m_pageFailed = true;
+        m_page.shader->destroy();
+        HyprlandAPI::addNotification(PHANDLE, std::format("[{}] The page card shader failed to compile, pages keep square corners", PLUGIN_NAME),
+                                     CHyprColor{1.0, 0.6, 0.2, 1.0}, 8000);
+        return nullptr;
+    }
+
+    const auto program   = m_page.shader->program();
+    m_page.padding       = glGetUniformLocation(program, "padding");
+    m_page.fullSize      = glGetUniformLocation(program, "fullSize");
+    m_page.page          = glGetUniformLocation(program, "page");
+    m_page.radii         = glGetUniformLocation(program, "radii");
+    m_page.roundingPower = glGetUniformLocation(program, "roundingPower");
+    m_page.rimA          = glGetUniformLocation(program, "rimA");
+    m_page.alpha         = glGetUniformLocation(program, "alpha");
+    m_page.lightDir      = glGetUniformLocation(program, "lightDir");
+    m_pageCompiled       = true;
+    return &m_page;
 }
 
 void CShaderManager::initializeIfNeeded() {

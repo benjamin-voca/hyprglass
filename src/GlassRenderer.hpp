@@ -16,6 +16,7 @@
 // Shared GL rendering pipeline used by both window decorations and layer surfaces.
 // Callers own their sample framebuffers; these functions operate on passed-in state.
 struct SChromeProgram;
+struct SPageProgram;
 
 namespace GlassRenderer {
 
@@ -159,8 +160,32 @@ struct SSampleMap {
 [[nodiscard]] SSampleMap sampleMapFor(const CBox& box, int downscale);
 
 // Draws what the window has over its flat background on top of the glass (chromekey.frag).
+// Which corners of a keyed box are the window's rounded ones.
+inline constexpr int CORNER_TL = 1, CORNER_TR = 2, CORNER_BR = 4, CORNER_BL = 8;
+// What the keyed box is: a band along the top (keys read off the window's own pixels), a strip
+// down the right (one key colour, read on the CPU), or the whole window (frame, toolbar, body).
+inline constexpr int CHROME_TOP = 0, CHROME_SIDE = 1, CHROME_FULL = 2;
+struct SChromeKey {
+    int                  mode    = CHROME_TOP;
+    float                splitPx = 0.0f; // where the tab strip ends and the toolbar starts, 0 for one key
+    float                bodyPx  = 0.0f; // CHROME_FULL: where the toolbar ends and the page starts
+    std::array<float, 3> body{};         // CHROME_SIDE: the strip's colour; CHROME_FULL: the page body's
+    bool                 hasBody = false;
+};
 void drawChromeKey(Render::CRenderContext& ctx, const SChromeProgram& program, SP<Render::IFramebuffer> copy, SP<Render::IFramebuffer> target,
-                   const CBox& box, const Vector2D& paddingRatio, float radius, float roundingPower, float keepAlpha, float alpha, float splitPx);
+                   const CBox& box, const Vector2D& paddingRatio, float radius, float roundingPower, float keepAlpha, float alpha, int corners,
+                   const SChromeKey& key);
+
+// A page drawn as a sheet in the glass: its copy back inside a rounded rect with a rim, and
+// a shadow on the glass around it (see pagecard.frag). Box px, relative to the card box.
+struct SPageCard {
+    std::array<float, 4> pageInCard{}; // x0, y0, x1, y1
+    std::array<float, 4> radii{};      // TL, TR, BR, BL
+    float                power = 2.0f, rimWidth = 1.5f, rim = 0.0f, shadowPx = 0.0f, shadow = 0.0f, alpha = 1.0f;
+    Vector2D             lightDir{0.0, -1.0};
+};
+void drawPageCard(Render::CRenderContext& ctx, const SPageProgram& program, SP<Render::IFramebuffer> copy, SP<Render::IFramebuffer> target,
+                  const CBox& box, const Vector2D& paddingRatio, const SPageCard& card);
 
 // GL name of a framebuffer, for passes that bind it directly.
 [[nodiscard]] GLuint framebufferId(const SP<Render::IFramebuffer>& framebuffer);

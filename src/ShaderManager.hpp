@@ -130,6 +130,13 @@ struct SBlurUniforms {
 struct SChromeProgram {
     SP<CShader> shader = makeShared<CShader>();
     GLint padding = -1, fullSize = -1, radius = -1, roundingPower = -1, keepAlpha = -1, alpha = -1, splitPx = -1;
+    GLint bodyPx = -1, corners = -1, mode = -1, hasBody = -1, body = -1;
+};
+
+// Puts a page back as a sheet in the glass: rounded, rimmed, with a shadow (see pagecard.frag).
+struct SPageProgram {
+    SP<CShader> shader = makeShared<CShader>();
+    GLint padding = -1, fullSize = -1, page = -1, radii = -1, roundingPower = -1, rimA = -1, alpha = -1, lightDir = -1;
 };
 
 // The programs that trace a layer's outline into a distance field (see Contour.hpp), and
@@ -184,6 +191,8 @@ class CShaderManager {
 
     // The chrome key program, compiled on first use. Null when it failed to compile.
     [[nodiscard]] const SChromeProgram* chromeProgram();
+    // The page card program, compiled on first use. Null when it failed to compile.
+    [[nodiscard]] const SPageProgram* pageProgram();
 
     SP<CShader>    blurShader = makeShared<CShader>();
     SBlurUniforms  blurUniforms;
@@ -202,6 +211,9 @@ class CShaderManager {
     SChromeProgram m_chrome;
     bool           m_chromeCompiled = false;
     bool           m_chromeFailed   = false;
+    SPageProgram   m_page;
+    bool           m_pageCompiled = false;
+    bool           m_pageFailed   = false;
 
     [[nodiscard]] static std::string loadShaderSource(const char* fileName);
     [[nodiscard]] static bool compileGlassProgram(SGlassProgram& program, GlassFeatureMask features);

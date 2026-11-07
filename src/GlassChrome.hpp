@@ -6,8 +6,25 @@
 
 // Chrome glass: a browser cannot make its toolbar translucent, and only draws one buffer.
 // This pass sits above the window's surface and below its popups. It redraws the window's
-// glass over the top <height> px, then puts back what the app drew there with its flat
-// background colour lifted out. Page content below stays exactly as the app drew it.
+// glass over its toolbar band and, for a browser with its tabs down the side, the strip at
+// its right end, then puts back what the app drew there with its flat background colour
+// lifted out. Page content stays exactly as the app drew it, and with chrome_page_radius set
+// it gets rounded corners and a rim where it meets the glass, like a sheet lying in a frame.
+//
+// hyprglass_chrome_auto reads the window for where its flat bands end. hyprglass_chrome_<height>
+// [_<tab strip height>] fixes the band in logical px, hyprglass_chrome_side_<width> the strip,
+// and hyprglass_chrome_full keys the whole window: a new tab page over the wallpaper.
+inline constexpr int CHROME_AUTO = -1;
+
+struct SChromeShape {
+    int  height = 0; // top band, logical px, CHROME_AUTO to read it
+    int  split  = 0; // where the tab strip ends and the toolbar starts
+    int  side   = 0; // right strip, logical px, CHROME_AUTO to read it
+    bool full   = false;
+
+    [[nodiscard]] bool any() const { return height != 0 || side != 0 || full; }
+};
+
 class CGlassChromeDecoration : public IHyprWindowDecoration {
   public:
     explicit CGlassChromeDecoration(PHLWINDOW window);
@@ -30,7 +47,7 @@ class CGlassChromeDecoration : public IHyprWindowDecoration {
 
 class CGlassChromePassElement : public IPassElement {
   public:
-    CGlassChromePassElement(PHLWINDOWREF window, int heightLogical, int splitLogical);
+    CGlassChromePassElement(PHLWINDOWREF window, const SChromeShape& shape);
 
     std::vector<UP<IPassElement>> draw(Render::CRenderContext& ctx) override;
     [[nodiscard]] bool                needsLiveBlur(Render::CRenderContext&) override { return false; }
@@ -42,6 +59,5 @@ class CGlassChromePassElement : public IPassElement {
 
   private:
     PHLWINDOWREF m_window;
-    int          m_heightLogical = 0;
-    int          m_splitLogical  = 0;
+    SChromeShape m_shape;
 };

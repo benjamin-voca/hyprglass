@@ -151,6 +151,9 @@ inline constexpr auto CARD_LIGHT      = "plugin:hyprglass:card_light";       // 
 inline constexpr auto CARD_SHEEN      = "plugin:hyprglass:card_sheen";       // hg.cards(): light falling across a card from its lit side
 inline constexpr auto CARD_SHADOW     = "plugin:hyprglass:card_shadow";      // hg.cards(): how far the sheet darkens under a card
 inline constexpr auto CHROME_OPACITY  = "plugin:hyprglass:chrome_opacity";   // how much of the keyed background stays (0 = pure glass)
+inline constexpr auto CHROME_PAGE_RADIUS = "plugin:hyprglass:chrome_page_radius"; // a browser's page gets rounded corners where it meets the glass, logical px (0 = off)
+inline constexpr auto CHROME_PAGE_RIM    = "plugin:hyprglass:chrome_page_rim";    // light along the page's edge (0-1)
+inline constexpr auto CHROME_PAGE_SHADOW = "plugin:hyprglass:chrome_page_shadow"; // how far the page's shadow falls on the glass, logical px
 
 inline constexpr size_t MAX_LAYER_CARDS = 24;
 
@@ -193,6 +196,8 @@ inline constexpr auto FOCUS_LIGHT           = "plugin:hyprglass:focus_light";
 inline constexpr auto FOCUS_LIGHT_COLOR     = "plugin:hyprglass:focus_light_color";
 inline constexpr auto FROST                 = "plugin:hyprglass:frost";
 inline constexpr auto FROST_BLUR            = "plugin:hyprglass:frost_blur";
+inline constexpr auto FROST_INACTIVE        = "plugin:hyprglass:frost_inactive";  // frost on a window that has not got focus
+inline constexpr auto OIL                   = "plugin:hyprglass:oil";             // this glass's share of oil_amount
 
 // Layer surface support
 inline constexpr auto LAYERS_ENABLED            = "plugin:hyprglass:layers:enabled";
@@ -261,6 +266,8 @@ inline constexpr auto DARK_FOCUS_LIGHT          = "plugin:hyprglass:dark:focus_l
 inline constexpr auto DARK_FOCUS_LIGHT_COLOR    = "plugin:hyprglass:dark:focus_light_color";
 inline constexpr auto DARK_FROST                = "plugin:hyprglass:dark:frost";
 inline constexpr auto DARK_FROST_BLUR           = "plugin:hyprglass:dark:frost_blur";
+inline constexpr auto DARK_FROST_INACTIVE       = "plugin:hyprglass:dark:frost_inactive";
+inline constexpr auto DARK_OIL                  = "plugin:hyprglass:dark:oil";
 
 // Overridable — light theme overrides
 inline constexpr auto LIGHT_BLUR_STRENGTH        = "plugin:hyprglass:light:blur_strength";
@@ -301,6 +308,8 @@ inline constexpr auto LIGHT_FOCUS_LIGHT          = "plugin:hyprglass:light:focus
 inline constexpr auto LIGHT_FOCUS_LIGHT_COLOR    = "plugin:hyprglass:light:focus_light_color";
 inline constexpr auto LIGHT_FROST               = "plugin:hyprglass:light:frost";
 inline constexpr auto LIGHT_FROST_BLUR          = "plugin:hyprglass:light:frost_blur";
+inline constexpr auto LIGHT_FROST_INACTIVE      = "plugin:hyprglass:light:frost_inactive";
+inline constexpr auto LIGHT_OIL                 = "plugin:hyprglass:light:oil";
 
 } // namespace ConfigKeys
 
@@ -344,6 +353,8 @@ struct SOverridableConfig {
     Config::INTEGER* const* focusLightColor     = nullptr;
     Config::FLOAT* const*   frost               = nullptr;
     Config::FLOAT* const*   frostBlur           = nullptr;
+    Config::FLOAT* const*   frostInactive       = nullptr;
+    Config::FLOAT* const*   oil                 = nullptr;
 };
 
 // Plain values for a user-defined preset layer (all sentinel = not set → inherit)
@@ -386,6 +397,8 @@ struct SPresetValues {
     int64_t focusLightColor    = SENTINEL_INT;
     float   frost              = static_cast<float>(SENTINEL_FLOAT);
     float   frostBlur          = static_cast<float>(SENTINEL_FLOAT);
+    float   frostInactive      = static_cast<float>(SENTINEL_FLOAT);
+    float   oil                = static_cast<float>(SENTINEL_FLOAT);
 };
 
 struct SCustomPreset {
@@ -487,6 +500,9 @@ struct SPluginConfig {
     Config::FLOAT* const* lightLayers   = nullptr;
     Config::FLOAT* const* contourThinPx = nullptr;
     Config::FLOAT* const* chromeOpacity = nullptr;
+    Config::FLOAT* const* chromePageRadius = nullptr;
+    Config::FLOAT* const* chromePageRim = nullptr;
+    Config::FLOAT* const* chromePageShadow = nullptr;
     Config::FLOAT* const* contourFrostDim = nullptr;
     Config::FLOAT* const* contourStripDim = nullptr;
     Config::FLOAT* const* contourStripBevel = nullptr;

@@ -5,6 +5,9 @@
 #include "LiquidSim.hpp"
 #include "PluginConfig.hpp"
 
+struct SChromeShape;
+
+#include <array>
 #include <chrono>
 #include <optional>
 #include <hyprland/src/desktop/view/window/Window.hpp>
@@ -30,7 +33,7 @@ class CGlassDecoration : public IHyprWindowDecoration {
     [[nodiscard]] PHLWINDOW getOwner();
     void                    renderPass(Render::CRenderContext& ctx, PHLMONITOR monitor, const float& alpha, bool xray);
     // Chrome glass: runs above the window's surface, below its popups (GlassChrome.cpp).
-    void                    renderChrome(Render::CRenderContext& ctx, PHLMONITOR monitor, int heightLogical, int splitLogical);
+    void                    renderChrome(Render::CRenderContext& ctx, PHLMONITOR monitor, const struct SChromeShape& shape);
     void                    onFullscreenStateChanged();
 
     // Content below committed damage in our sample region — resample next frame.
@@ -125,12 +128,19 @@ class CGlassDecoration : public IHyprWindowDecoration {
 
     // Chrome glass: what the glass draw of this frame used, so the top of the window can
     // be drawn the same again, and a copy of what the window itself put there.
-    SP<Render::IFramebuffer> m_chromeCopy;
-    void                     detectChrome(const SP<Render::IFramebuffer>& source, const CBox& windowBox, float scale);
+    SP<Render::IFramebuffer> m_chromeCopy, m_chromeSideCopy, m_pageCopy;
+    void                     detectChrome(const SP<Render::IFramebuffer>& source, const CBox& windowBox, float scale, const SChromeShape& shape);
+    void                     renderPageCard(Render::CRenderContext& ctx, PHLMONITOR monitor, const CBox& windowBox, double heightPx, double sidePx,
+                                            const SResolveContext& resolveContext);
     std::chrono::steady_clock::time_point m_chromeAutoAt{};
-    double                   m_chromeAutoWidth  = 0.0;
+    double                   m_chromeAutoWidth  = 0.0, m_chromeAutoHeightSeen = 0.0;
     int                      m_chromeAutoHeight = 0;
     int                      m_chromeAutoSplit  = 0;
+    int                      m_chromeAutoSide   = 0;
+    // Key colours read off the window: the right strip's background, and the page body's.
+    std::array<float, 3>     m_chromeSideKey{};
+    std::array<float, 3>     m_chromeBodyKey{};
+    bool                     m_chromeKeysValid  = false;
     uint64_t                 m_chromeReadySerial = 0;
     float                    m_chromeAlpha = 1.0f, m_chromeRadius = 0.0f, m_chromePower = 2.0f, m_chromeFocus = 0.0f;
 
@@ -166,6 +176,9 @@ class CGlassDecoration : public IHyprWindowDecoration {
 
     // Damages the glass box only: frost changes how the cached sample is drawn, not the sample.
     void damageFrost();
+    // frost_inactive as of the last rendered frame, and whether that frame had focus.
+    float m_lastFrostInactive = 0.0f;
+    bool  m_frostFocused      = false;
 
     // Frame serial the last glass element was queued for, and its index in that
     // frame. Hyprland renders a floating window over fullscreen more than once

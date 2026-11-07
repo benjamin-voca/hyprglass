@@ -120,6 +120,9 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_LAYERS, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_THIN_PX, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_OPACITY, Config::FLOAT{0.25f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_PAGE_RADIUS, Config::FLOAT{0.0f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_PAGE_RIM, Config::FLOAT{0.35f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_PAGE_SHADOW, Config::FLOAT{8.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_FROST_DIM, Config::FLOAT{0.1f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_STRIP_DIM, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_STRIP_BEVEL, Config::FLOAT{1.0f});
@@ -198,6 +201,8 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::FOCUS_LIGHT_COLOR, Config::INTEGER{GlobalDefaults::FOCUS_LIGHT_COLOR});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::FROST, Config::FLOAT{GlobalDefaults::FROST});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::FROST_BLUR, Config::FLOAT{GlobalDefaults::FROST_BLUR});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::FROST_INACTIVE, Config::FLOAT{GlobalDefaults::FROST_INACTIVE});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::OIL, Config::FLOAT{GlobalDefaults::OIL});
 
     // Dark theme overrides — all sentinel (inherit from global)
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::DARK_BLUR_STRENGTH, Config::FLOAT{SENTINEL_FLOAT});
@@ -238,6 +243,8 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::DARK_FOCUS_LIGHT_COLOR, Config::INTEGER{SENTINEL_INT});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::DARK_FROST, Config::FLOAT{SENTINEL_FLOAT});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::DARK_FROST_BLUR, Config::FLOAT{SENTINEL_FLOAT});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::DARK_FROST_INACTIVE, Config::FLOAT{SENTINEL_FLOAT});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::DARK_OIL, Config::FLOAT{SENTINEL_FLOAT});
 
     // Light theme overrides — all sentinel (inherit from global)
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_BLUR_STRENGTH, Config::FLOAT{SENTINEL_FLOAT});
@@ -278,6 +285,8 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::LIGHT_FOCUS_LIGHT_COLOR, Config::INTEGER{SENTINEL_INT});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_FROST, Config::FLOAT{SENTINEL_FLOAT});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_FROST_BLUR, Config::FLOAT{SENTINEL_FLOAT});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_FROST_INACTIVE, Config::FLOAT{SENTINEL_FLOAT});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_OIL, Config::FLOAT{SENTINEL_FLOAT});
 
     // Lua callbacks for custom presets, layers and config.
     HyprlandAPI::addLuaFunction(handle, "hyprglass", "preset", handleLuaPreset);
@@ -324,7 +333,8 @@ static void initOverridablePointers(HANDLE handle, SOverridableConfig& layer,
                                     const char* bevelAngle, const char* bevelShadow,
                                     const char* selfSample, const char* xray,
                                     const char* focusLight, const char* focusLightColor,
-                                    const char* frost, const char* frostBlur) {
+                                    const char* frost, const char* frostBlur,
+                                    const char* frostInactive, const char* oil) {
     layer.blurStrength        = getStaticPtr<Config::FLOAT>(handle, blurStrength);
     layer.blurIterations      = getStaticPtr<Config::INTEGER>(handle, blurIterations);
     layer.noiseStrength       = getStaticPtr<Config::FLOAT>(handle, noiseStrength);
@@ -363,6 +373,8 @@ static void initOverridablePointers(HANDLE handle, SOverridableConfig& layer,
     layer.focusLightColor     = getStaticPtr<Config::INTEGER>(handle, focusLightColor);
     layer.frost               = getStaticPtr<Config::FLOAT>(handle, frost);
     layer.frostBlur           = getStaticPtr<Config::FLOAT>(handle, frostBlur);
+    layer.frostInactive       = getStaticPtr<Config::FLOAT>(handle, frostInactive);
+    layer.oil                 = getStaticPtr<Config::FLOAT>(handle, oil);
 }
 
 void initConfigPointers(HANDLE handle, SPluginConfig& config) {
@@ -417,6 +429,9 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.lightLayers   = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIGHT_LAYERS);
     config.contourThinPx = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_THIN_PX);
     config.chromeOpacity = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_OPACITY);
+    config.chromePageRadius = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_PAGE_RADIUS);
+    config.chromePageRim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_PAGE_RIM);
+    config.chromePageShadow = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_PAGE_SHADOW);
     config.contourFrostDim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_FROST_DIM);
     config.contourStripDim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_STRIP_DIM);
     config.contourStripBevel = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_STRIP_BEVEL);
@@ -471,7 +486,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
         ConfigKeys::BEVEL_ANGLE, ConfigKeys::BEVEL_SHADOW,
         ConfigKeys::SELF_SAMPLE, ConfigKeys::XRAY,
         ConfigKeys::FOCUS_LIGHT, ConfigKeys::FOCUS_LIGHT_COLOR,
-        ConfigKeys::FROST, ConfigKeys::FROST_BLUR);
+        ConfigKeys::FROST, ConfigKeys::FROST_BLUR,
+        ConfigKeys::FROST_INACTIVE, ConfigKeys::OIL);
 
     initOverridablePointers(handle, config.dark,
         ConfigKeys::DARK_BLUR_STRENGTH, ConfigKeys::DARK_BLUR_ITERATIONS, ConfigKeys::DARK_NOISE_STRENGTH,
@@ -493,7 +509,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
         ConfigKeys::DARK_BEVEL_ANGLE, ConfigKeys::DARK_BEVEL_SHADOW,
         ConfigKeys::DARK_SELF_SAMPLE, ConfigKeys::DARK_XRAY,
         ConfigKeys::DARK_FOCUS_LIGHT, ConfigKeys::DARK_FOCUS_LIGHT_COLOR,
-        ConfigKeys::DARK_FROST, ConfigKeys::DARK_FROST_BLUR);
+        ConfigKeys::DARK_FROST, ConfigKeys::DARK_FROST_BLUR,
+        ConfigKeys::DARK_FROST_INACTIVE, ConfigKeys::DARK_OIL);
 
     initOverridablePointers(handle, config.light,
         ConfigKeys::LIGHT_BLUR_STRENGTH, ConfigKeys::LIGHT_BLUR_ITERATIONS, ConfigKeys::LIGHT_NOISE_STRENGTH,
@@ -515,7 +532,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
         ConfigKeys::LIGHT_BEVEL_ANGLE, ConfigKeys::LIGHT_BEVEL_SHADOW,
         ConfigKeys::LIGHT_SELF_SAMPLE, ConfigKeys::LIGHT_XRAY,
         ConfigKeys::LIGHT_FOCUS_LIGHT, ConfigKeys::LIGHT_FOCUS_LIGHT_COLOR,
-        ConfigKeys::LIGHT_FROST, ConfigKeys::LIGHT_FROST_BLUR);
+        ConfigKeys::LIGHT_FROST, ConfigKeys::LIGHT_FROST_BLUR,
+        ConfigKeys::LIGHT_FROST_INACTIVE, ConfigKeys::LIGHT_OIL);
 }
 
 // ── Preset values ────────────────────────────────────────────────────────────
@@ -556,6 +574,8 @@ static float* presetFloatField(SPresetValues& values, std::string_view key) {
     if (key == "focus_light")          return &values.focusLight;
     if (key == "frost")                return &values.frost;
     if (key == "frost_blur")           return &values.frostBlur;
+    if (key == "frost_inactive")       return &values.frostInactive;
+    if (key == "oil")                  return &values.oil;
     return nullptr;
 }
 
@@ -611,6 +631,8 @@ static void mergePresetValues(SPresetValues& target, const SPresetValues& overri
     mergeInt(target.focusLightColor, overrides.focusLightColor);
     mergeFloat(target.frost, overrides.frost);
     mergeFloat(target.frostBlur, overrides.frostBlur);
+    mergeFloat(target.frostInactive, overrides.frostInactive);
+    mergeFloat(target.oil, overrides.oil);
 }
 
 // Set by every hyprglass.* call, cleared before each reload.

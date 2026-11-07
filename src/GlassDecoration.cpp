@@ -105,6 +105,11 @@ static float frostBlurFor(const SResolveContext& ctx) {
     return value > 0.0f ? std::min(value, Frost::BLUR_MAX) : 0.0f;
 }
 
+static float frostInactiveFor(const SResolveContext& ctx) {
+    const float value = resolvePresetFloat(ctx, &SPresetValues::frostInactive, &SOverridableConfig::frostInactive, GlobalDefaults::FROST_INACTIVE);
+    return value > 0.0f ? std::min(value, 1.0f) : 0.0f;
+}
+
 static constexpr std::chrono::milliseconds FOCUS_LIGHT_FADE{200};
 
 // Hyprland's animations:enabled; a key that cannot be read counts as on.
@@ -149,6 +154,13 @@ void CGlassDecoration::onActiveWindowChanged(const PHLWINDOW& activeWindow) {
     // A closing last window is announced as active with focus already cleared.
     const auto focus  = Desktop::focusState();
     const bool active = activeWindow && ownsWindow(activeWindow) && focus && focus->window() == activeWindow;
+    // Inactive frost eases in renderPass(); this only gets the window drawn so the ease starts.
+    if (active != m_frostFocused) {
+        m_frostFocused = active;
+        const auto window = m_window.lock();
+        if (m_lastFrostInactive > 0.0f && window && window->m_workspace && window->m_workspace->visible())
+            damageFrost();
+    }
     if (active == m_focusLightTarget)
         return;
 
@@ -686,9 +698,14 @@ void CGlassDecoration::renderPass(Render::CRenderContext& ctx, PHLMONITOR monito
     // shows no window behind the glass, and a fullscreen window has nothing behind it.
     GlassRenderer::SFrostInput frostInput;
     const float                frostSetting = (xray || fsUnrounded) ? 0.0f : frostFor(resolveContext);
-    if (frostSetting > 0.0f || m_frost.active()) {
-        const float target =
-            frostSetting > 0.0f ? frostSetting * Frost::amountForCoverage(Frost::coveredFraction(window, monitor, windowBox)) : 0.0f;
+    // Inactive frost: a window without focus steps back behind frost, whatever is behind it.
+    // X-ray glass takes it too: its sample is the wallpaper, and that goes soft the same way.
+    m_lastFrostInactive        = fsUnrounded ? 0.0f : frostInactiveFor(resolveContext);
+    m_frostFocused             = Desktop::focusState()->window() == window;
+    const float inactiveTarget = m_frostFocused ? 0.0f : m_lastFrostInactive;
+    if (frostSetting > 0.0f || inactiveTarget > 0.0f || m_frost.active()) {
+        const float target = std::max(inactiveTarget,
+            frostSetting > 0.0f ? frostSetting * Frost::amountForCoverage(Frost::coveredFraction(window, monitor, windowBox)) : 0.0f);
 
         // A window spanning two monitors gets a different target on each: it snaps on a
         // monitor change, or it would ease between them and never settle.

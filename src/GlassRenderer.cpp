@@ -747,7 +747,9 @@ void applyGlassEffect(Render::CRenderContext& ctx,
         glUniform1f(uniforms.materialize, win ? lf.materialize : 1.0f);
         glUniform2f(uniforms.boxPos, static_cast<float>(box.x), static_cast<float>(box.y));
         const double oilT = std::fmod(GlassLight::nowSeconds() * f(c.oilSpeed), 10000.0);
-        glUniform4f(uniforms.oilA, win ? f(c.oilAmount) * lf.oilShare : 0.0f, static_cast<float>(oilT), f(c.oilScale) * sc, f(c.oilColor));
+        // oil: a preset can take less of the film than the desktop setting, or none
+        const float oilShare = std::clamp(resolvePresetFloat(resolveContext, &SPresetValues::oil, &SOverridableConfig::oil, GlobalDefaults::OIL), 0.0f, 1.0f);
+        glUniform4f(uniforms.oilA, win ? f(c.oilAmount) * lf.oilShare * oilShare : 0.0f, static_cast<float>(oilT), f(c.oilScale) * sc, f(c.oilColor));
         glUniform4f(uniforms.oilB, f(c.oilWarp) * 8.0f * sc, 0.0f, 0.0f, 0.0f);
         glUniform3f(uniforms.parallax, static_cast<float>(parallaxPx.x), static_cast<float>(parallaxPx.y), f(c.parallaxDepth));
 
@@ -826,7 +828,8 @@ void applyGlassEffect(Render::CRenderContext& ctx,
 }
 
 void drawChromeKey(Render::CRenderContext& ctx, const SChromeProgram& program, SP<Render::IFramebuffer> copy, SP<Render::IFramebuffer> target,
-                   const CBox& box, const Vector2D& paddingRatio, float radius, float roundingPower, float keepAlpha, float alpha, float splitPx) {
+                   const CBox& box, const Vector2D& paddingRatio, float radius, float roundingPower, float keepAlpha, float alpha, int corners,
+                   const SChromeKey& key) {
     if (!copy || !target || !copy->getTexture())
         return;
 
@@ -846,7 +849,44 @@ void drawChromeKey(Render::CRenderContext& ctx, const SChromeProgram& program, S
     glUniform1f(program.roundingPower, std::max(roundingPower, 1.0f));
     glUniform1f(program.keepAlpha, std::clamp(keepAlpha, 0.0f, 1.0f));
     glUniform1f(program.alpha, std::clamp(alpha, 0.0f, 1.0f));
-    glUniform1f(program.splitPx, splitPx);
+    glUniform1f(program.splitPx, key.splitPx);
+    glUniform1f(program.bodyPx, key.bodyPx);
+    glUniform1i(program.corners, corners);
+    glUniform1i(program.mode, key.mode);
+    glUniform1i(program.hasBody, key.hasBody ? 1 : 0);
+    glUniform3f(program.body, key.body[0], key.body[1], key.body[2]);
+
+    glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+
+    CBox damageExtents = ctx.m_data.damage.copy().intersect(box).getExtents();
+    g_pHyprOpenGL->scissor(ctx, damageExtents.w > 0 && damageExtents.h > 0 ? damageExtents : box, ctx.m_data.transformDamage);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    g_pHyprOpenGL->scissor(ctx, nullptr);
+}
+
+void drawPageCard(Render::CRenderContext& ctx, const SPageProgram& program, SP<Render::IFramebuffer> copy, SP<Render::IFramebuffer> target,
+                  const CBox& box, const Vector2D& paddingRatio, const SPageCard& card) {
+    if (!copy || !target || !copy->getTexture())
+        return;
+
+    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(ctx, box);
+    glMatrix.transpose();
+
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(target));
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
+    copy->getTexture()->bind();
+
+    auto shader = g_pHyprOpenGL->useShader(program.shader);
+    shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, glMatrix.getMatrix());
+    shader->setUniformInt(SHADER_TEX, 0);
+    glUniform2f(program.padding, static_cast<float>(paddingRatio.x), static_cast<float>(paddingRatio.y));
+    glUniform2f(program.fullSize, static_cast<float>(box.w), static_cast<float>(box.h));
+    glUniform4f(program.page, card.pageInCard[0], card.pageInCard[1], card.pageInCard[2], card.pageInCard[3]);
+    glUniform4f(program.radii, card.radii[0], card.radii[1], card.radii[2], card.radii[3]);
+    glUniform1f(program.roundingPower, std::max(card.power, 1.0f));
+    glUniform4f(program.rimA, card.rimWidth, card.rim, card.shadowPx, card.shadow);
+    glUniform1f(program.alpha, std::clamp(card.alpha, 0.0f, 1.0f));
+    glUniform2f(program.lightDir, static_cast<float>(card.lightDir.x), static_cast<float>(card.lightDir.y));
 
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
 

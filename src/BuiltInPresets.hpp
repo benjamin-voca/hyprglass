@@ -58,6 +58,8 @@ namespace GlobalDefaults {
     inline constexpr int64_t FOCUS_LIGHT_COLOR    = 0xffffff00;
     inline constexpr float   FROST                = 0.0f; // 0 = no frost behind windows
     inline constexpr float   FROST_BLUR           = 3.0f; // extra blur, in blur_strength units
+    inline constexpr float   FROST_INACTIVE       = 0.0f; // 0 = an unfocused window frosts no further
+    inline constexpr float   OIL                  = 1.0f; // share of oil_amount this glass takes
 } // namespace GlobalDefaults
 
 // ── Built-in presets ─────────────────────────────────────────────────────────

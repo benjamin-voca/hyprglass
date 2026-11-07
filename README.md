@@ -146,6 +146,8 @@ Settings resolve through: **preset chain** (theme variant, shared, inherited) th
 | `focus_light_color` | color | `0xffffff00` | — | — | Color of the focus light; alpha sets how much it replaces white (0xRRGGBBAA) |
 | `frost` | float | `0.0` | — | — | The glass blurs further where other windows are behind it and stays clear over the wallpaper, `0` off. See [Frost](#frost) (0.0-1.0). Windows only |
 | `frost_blur` | float | `3.0` | — | — | Extra blur of the frost, in `blur_strength` units on top of it. Needs `frost` (0.5-3, at most 10: past about 3 the blur stops getting wider) |
+| `frost_inactive` | float | `0.0` | — | — | Frost on a window that has not got focus, whatever is behind it, so focus reads as depth. Works under `xray` too (0.0-1.0). Windows only |
+| `oil` | float | `1.0` | — | — | This glass's share of `oil_amount`: `0` keeps the film off one preset while the desktop has it (0.0-1.0) |
 | `brightness` | float | — | `0.82` | `1.12` | Brightness multiplier |
 | `contrast` | float | — | `0.90` | `0.92` | Contrast around midpoint |
 | `saturation` | float | — | `0.80` | `0.85` | Desaturation (0 = grayscale, 1 = full) |

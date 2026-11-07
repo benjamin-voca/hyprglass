@@ -1412,6 +1412,11 @@ uniform float roundingPower;
 uniform float keepAlpha;     // how much of the frame colour stays, as one tint over the whole box
 uniform float alpha;         // the window's fade
 uniform float splitPx;       // where the tab strip ends and the toolbar starts, 0 for one key
+uniform float bodyPx;        // whole window: where the toolbar ends and the page starts
+uniform int   corners;       // which corners are the window's rounded ones: 1 TL, 2 TR, 4 BR, 8 BL
+uniform int   mode;          // 0 top band, 1 side strip, 2 whole window
+uniform int   hasBody;       // body holds a colour read off the window
+uniform vec3  body;          // side strip: its colour; whole window: the page body's
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -1427,29 +1432,44 @@ float liftedAlpha(vec3 pixel, vec3 key) {
 
 void main() {
     vec2 px = v_texcoord * fullSize;
-    // The top corners are the only ones this box has.
+    // Only the window's own corners are round; the box may hold any of them.
     float cornerAlpha = 1.0;
     if (radius > 0.0) {
-        vec2 q = max(vec2(radius) - vec2(min(px.x, fullSize.x - px.x), px.y), vec2(0.0));
-        float d = pow(pow(q.x, roundingPower) + pow(q.y, roundingPower), 1.0 / roundingPower) - radius;
-        if (d > 0.0) discard;
-        cornerAlpha = 1.0 - smoothstep(-1.5, 0.5, d);
+        bool left = px.x < fullSize.x * 0.5;
+        bool top  = px.y < fullSize.y * 0.5;
+        int  bit  = top ? (left ? 1 : 2) : (left ? 8 : 4);
+        if ((corners & bit) != 0) {
+            vec2 q = max(vec2(radius) - vec2(min(px.x, fullSize.x - px.x), min(px.y, fullSize.y - px.y)), vec2(0.0));
+            float d = pow(pow(q.x, roundingPower) + pow(q.y, roundingPower), 1.0 / roundingPower) - radius;
+            if (d > 0.0) discard;
+            cornerAlpha = 1.0 - smoothstep(-1.5, 0.5, d);
+        }
     }
 
     vec3 pixel = texture(tex, toCopy(v_texcoord)).rgb;
-    // The window's top row is its frame colour, above any tab, at any window size.
-    vec3 frame = texture(tex, toCopy(vec2(0.5, 1.5 / fullSize.y))).rgb;
+    // The window's top row is its frame colour, above any tab, at any window size. A side
+    // strip has one colour, read off the window instead.
+    vec3 frame = mode == 1 ? body : texture(tex, toCopy(vec2(0.5, 1.5 / fullSize.y))).rgb;
     vec3 key   = frame;
     float a    = liftedAlpha(pixel, frame);
 
     // A toolbar is a second flat colour. Below the tabs either one is background, so the two
     // read as one sheet. Above that only the frame is: the active tab keeps its veil.
-    if (splitPx > 0.0 && px.y >= splitPx) {
-        vec3  bar  = texture(tex, toCopy(vec2(1.0 - 6.0 / fullSize.x, 1.0 - 20.0 / fullSize.y))).rgb;
+    if (mode != 1 && splitPx > 0.0 && px.y >= splitPx) {
+        float barY = mode == 2 && bodyPx > splitPx ? (bodyPx - 4.0) / fullSize.y : 1.0 - 20.0 / fullSize.y;
+        vec3  bar  = texture(tex, toCopy(vec2(1.0 - 6.0 / fullSize.x, barY))).rgb;
         float aBar = liftedAlpha(pixel, bar);
         if (aBar < a) {
             a   = aBar;
             key = bar;
+        }
+    }
+    // The whole window: below the toolbar the page body is background too.
+    if (mode == 2 && hasBody == 1 && px.y >= bodyPx) {
+        float aBody = liftedAlpha(pixel, body);
+        if (aBody < a) {
+            a   = aBody;
+            key = body;
         }
     }
 
@@ -1460,7 +1480,7 @@ void main() {
     a = boosted;
 
     // Window buttons are drawn thin and dim for an opaque frame. On glass they would vanish.
-    if (splitPx > 0.0 && px.y < splitPx && px.x > fullSize.x - splitPx * 5.0) {
+    if (mode != 1 && splitPx > 0.0 && px.y < splitPx && px.x > fullSize.x - splitPx * 5.0) {
         // Glyphs only: the frame has a faint veil of its own there, which must not light up.
         float glyph  = smoothstep(0.1, 0.24, a);
         float strong = mix(a, min(a * 1.9, 1.0), glyph);
@@ -1468,6 +1488,58 @@ void main() {
         a            = strong;
     }
     fragColor = vec4(foreground + frame * keepAlpha * (1.0 - a), a + keepAlpha * (1.0 - a)) * cornerAlpha * alpha;
+}
+)GLSL"},
+
+    // Page card: a browser's page put back as a sheet lying in the glass. Inside its rounded
+    // rect the page's own pixels, with a rim of light along the edge that leans toward the
+    // glass light; outside it, over the glass the corner cut shows, a soft shadow the sheet casts.
+    {"pagecard.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+uniform sampler2D tex;
+uniform vec2  padding;       // box UV -> padded copy UV
+uniform vec2  fullSize;      // the card box, px
+uniform vec4  page;          // the page inside it: x0, y0, x1, y1 px
+uniform vec4  radii;         // TL, TR, BR, BL px
+uniform float roundingPower;
+uniform vec4  rimA;          // rim width px, rim strength, shadow reach px, shadow strength
+uniform float alpha;         // the window's fade
+uniform vec2  lightDir;      // toward the glass light, unit
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+vec2 toCopy(vec2 uv) { return uv * (1.0 - 2.0 * padding) + padding; }
+
+void main() {
+    vec2  px     = v_texcoord * fullSize;
+    vec2  centre = 0.5 * (page.xy + page.zw);
+    vec2  half   = 0.5 * (page.zw - page.xy);
+    vec2  q      = px - centre;
+    float r      = q.x < 0.0 ? (q.y < 0.0 ? radii.x : radii.w) : (q.y < 0.0 ? radii.y : radii.z);
+    vec2  d2     = abs(q) - half + vec2(r);
+    vec2  o      = max(d2, vec2(0.0));
+    float d      = pow(pow(o.x, roundingPower) + pow(o.y, roundingPower), 1.0 / roundingPower) + min(max(d2.x, d2.y), 0.0) - r;
+
+    float rimWidth = rimA.x, rim = rimA.y, shadowPx = rimA.z, shadow = rimA.w;
+    if (d > shadowPx)
+        discard;
+
+    // the sheet's edge, antialiased: inside it the page, outside it the shadow on the glass
+    float inside = 1.0 - smoothstep(-0.75, 0.75, d);
+    float fall   = shadowPx > 0.0 ? 1.0 - smoothstep(0.0, shadowPx, max(d, 0.0)) : 0.0;
+    vec4  cast   = vec4(0.0, 0.0, 0.0, shadow * fall * fall);
+
+    vec4 pixel = texture(tex, toCopy(v_texcoord));
+    // a line of light just inside the edge, brightest on the side facing the light
+    vec2  n     = q / max(half, vec2(1.0));
+    float facing = 0.55 + 0.45 * clamp(dot(normalize(n + vec2(1e-4)), lightDir) * 0.5 + 0.5, 0.0, 1.0);
+    float line   = 1.0 - smoothstep(0.0, rimWidth, -d);
+    vec3  sheet  = pixel.rgb + vec3(rim * facing * line);
+
+    fragColor = (vec4(sheet, 1.0) * inside + cast * (1.0 - inside)) * alpha;
 }
 )GLSL"},
 
