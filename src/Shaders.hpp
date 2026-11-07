@@ -1516,10 +1516,10 @@ vec2 toCopy(vec2 uv) { return uv * (1.0 - 2.0 * padding) + padding; }
 void main() {
     vec2  px     = v_texcoord * fullSize;
     vec2  centre = 0.5 * (page.xy + page.zw);
-    vec2  half   = 0.5 * (page.zw - page.xy);
+    vec2  ext    = 0.5 * (page.zw - page.xy);
     vec2  q      = px - centre;
     float r      = q.x < 0.0 ? (q.y < 0.0 ? radii.x : radii.w) : (q.y < 0.0 ? radii.y : radii.z);
-    vec2  d2     = abs(q) - half + vec2(r);
+    vec2  d2     = abs(q) - ext + vec2(r);
     vec2  o      = max(d2, vec2(0.0));
     float d      = pow(pow(o.x, roundingPower) + pow(o.y, roundingPower), 1.0 / roundingPower) + min(max(d2.x, d2.y), 0.0) - r;
 
@@ -1530,16 +1530,16 @@ void main() {
     // the sheet's edge, antialiased: inside it the page, outside it the shadow on the glass
     float inside = 1.0 - smoothstep(-0.75, 0.75, d);
     float fall   = shadowPx > 0.0 ? 1.0 - smoothstep(0.0, shadowPx, max(d, 0.0)) : 0.0;
-    vec4  cast   = vec4(0.0, 0.0, 0.0, shadow * fall * fall);
+    vec4  shade  = vec4(0.0, 0.0, 0.0, shadow * fall * fall);
 
     vec4 pixel = texture(tex, toCopy(v_texcoord));
     // a line of light just inside the edge, brightest on the side facing the light
-    vec2  n     = q / max(half, vec2(1.0));
+    vec2  n     = q / max(ext, vec2(1.0));
     float facing = 0.55 + 0.45 * clamp(dot(normalize(n + vec2(1e-4)), lightDir) * 0.5 + 0.5, 0.0, 1.0);
     float line   = 1.0 - smoothstep(0.0, rimWidth, -d);
     vec3  sheet  = pixel.rgb + vec3(rim * facing * line);
 
-    fragColor = (vec4(sheet, 1.0) * inside + cast * (1.0 - inside)) * alpha;
+    fragColor = (vec4(sheet, 1.0) * inside + shade * (1.0 - inside)) * alpha;
 }
 )GLSL"},
 
