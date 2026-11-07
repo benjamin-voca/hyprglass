@@ -120,6 +120,7 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LIGHT_LAYERS, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CONTOUR_THIN_PX, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_OPACITY, Config::FLOAT{0.25f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_DARK_LIFT, Config::FLOAT{1.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_PAGE_RADIUS, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_PAGE_RIM, Config::FLOAT{0.35f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::CHROME_PAGE_SHADOW, Config::FLOAT{8.0f});
@@ -429,6 +430,7 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.lightLayers   = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::LIGHT_LAYERS);
     config.contourThinPx = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CONTOUR_THIN_PX);
     config.chromeOpacity = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_OPACITY);
+    config.chromeDarkLift = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_DARK_LIFT);
     config.chromePageRadius = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_PAGE_RADIUS);
     config.chromePageRim = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_PAGE_RIM);
     config.chromePageShadow = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::CHROME_PAGE_SHADOW);

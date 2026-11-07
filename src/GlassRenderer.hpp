@@ -171,6 +171,7 @@ struct SChromeKey {
     float                bodyPx  = 0.0f; // CHROME_FULL: where the toolbar ends and the page starts
     std::array<float, 3> body{};         // CHROME_SIDE: the strip's colour; CHROME_FULL: the page body's
     bool                 hasBody = false;
+    float                darkLift = 1.0f; // share of a darker-than-key field that comes through
 };
 void drawChromeKey(Render::CRenderContext& ctx, const SChromeProgram& program, SP<Render::IFramebuffer> copy, SP<Render::IFramebuffer> target,
                    const CBox& box, const Vector2D& paddingRatio, float radius, float roundingPower, float keepAlpha, float alpha, int corners,

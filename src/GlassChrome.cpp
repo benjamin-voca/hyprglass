@@ -267,10 +267,12 @@ void CGlassDecoration::renderChrome(Render::CRenderContext& ctx, PHLMONITOR moni
     const SResolveContext resolveContext = {preset, resolveThemeIsDark(), g_pGlobalState->config, g_pGlobalState->customPresets};
     const auto&           config         = g_pGlobalState->config;
     const float           keep           = config.chromeOpacity ? static_cast<float>(**config.chromeOpacity) : 0.25f;
+    const float           darkLift       = config.chromeDarkLift ? static_cast<float>(**config.chromeDarkLift) : 1.0f;
 
     // The glass again, clipped to the keyed box, then the app's pixels back over it with
     // their background lifted out.
-    const auto keyed = [&](SP<Render::IFramebuffer>& copy, const CBox& box, int corners, const GlassRenderer::SChromeKey& key) {
+    const auto keyed = [&](SP<Render::IFramebuffer>& copy, const CBox& box, int corners, GlassRenderer::SChromeKey key) {
+        key.darkLift     = darkLift;
         CRegion boxDamage = ctx.m_data.damage.copy().intersect(box);
         if (boxDamage.empty())
             return;

@@ -130,7 +130,7 @@ struct SBlurUniforms {
 struct SChromeProgram {
     SP<CShader> shader = makeShared<CShader>();
     GLint padding = -1, fullSize = -1, radius = -1, roundingPower = -1, keepAlpha = -1, alpha = -1, splitPx = -1;
-    GLint bodyPx = -1, corners = -1, mode = -1, hasBody = -1, body = -1;
+    GLint bodyPx = -1, corners = -1, mode = -1, hasBody = -1, body = -1, darkLift = -1;
 };
 
 // Puts a page back as a sheet in the glass: rounded, rimmed, with a shadow (see pagecard.frag).

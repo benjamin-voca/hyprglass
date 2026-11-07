@@ -151,6 +151,7 @@ inline constexpr auto CARD_LIGHT      = "plugin:hyprglass:card_light";       // 
 inline constexpr auto CARD_SHEEN      = "plugin:hyprglass:card_sheen";       // hg.cards(): light falling across a card from its lit side
 inline constexpr auto CARD_SHADOW     = "plugin:hyprglass:card_shadow";      // hg.cards(): how far the sheet darkens under a card
 inline constexpr auto CHROME_OPACITY  = "plugin:hyprglass:chrome_opacity";   // how much of the keyed background stays (0 = pure glass)
+inline constexpr auto CHROME_DARK_LIFT = "plugin:hyprglass:chrome_dark_lift"; // how much of a field darker than the key comes through (1 = all of it)
 inline constexpr auto CHROME_PAGE_RADIUS = "plugin:hyprglass:chrome_page_radius"; // a browser's page gets rounded corners where it meets the glass, logical px (0 = off)
 inline constexpr auto CHROME_PAGE_RIM    = "plugin:hyprglass:chrome_page_rim";    // light along the page's edge (0-1)
 inline constexpr auto CHROME_PAGE_SHADOW = "plugin:hyprglass:chrome_page_shadow"; // how far the page's shadow falls on the glass, logical px
@@ -500,6 +501,7 @@ struct SPluginConfig {
     Config::FLOAT* const* lightLayers   = nullptr;
     Config::FLOAT* const* contourThinPx = nullptr;
     Config::FLOAT* const* chromeOpacity = nullptr;
+    Config::FLOAT* const* chromeDarkLift = nullptr;
     Config::FLOAT* const* chromePageRadius = nullptr;
     Config::FLOAT* const* chromePageRim = nullptr;
     Config::FLOAT* const* chromePageShadow = nullptr;

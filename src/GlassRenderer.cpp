@@ -855,6 +855,7 @@ void drawChromeKey(Render::CRenderContext& ctx, const SChromeProgram& program, S
     glUniform1i(program.mode, key.mode);
     glUniform1i(program.hasBody, key.hasBody ? 1 : 0);
     glUniform3f(program.body, key.body[0], key.body[1], key.body[2]);
+    glUniform1f(program.darkLift, std::clamp(key.darkLift, 0.0f, 1.0f));
 
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
 

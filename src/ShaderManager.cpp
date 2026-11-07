@@ -238,6 +238,7 @@ const SChromeProgram* CShaderManager::chromeProgram() {
     m_chrome.alpha         = glGetUniformLocation(program, "alpha");
     m_chrome.splitPx       = glGetUniformLocation(program, "splitPx");
     m_chrome.bodyPx        = glGetUniformLocation(program, "bodyPx");
+    m_chrome.darkLift      = glGetUniformLocation(program, "darkLift");
     m_chrome.corners       = glGetUniformLocation(program, "corners");
     m_chrome.mode          = glGetUniformLocation(program, "mode");
     m_chrome.hasBody       = glGetUniformLocation(program, "hasBody");

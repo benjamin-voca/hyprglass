@@ -1417,17 +1417,24 @@ uniform int   corners;       // which corners are the window's rounded ones: 1 T
 uniform int   mode;          // 0 top band, 1 side strip, 2 whole window
 uniform int   hasBody;       // body holds a colour read off the window
 uniform vec3  body;          // side strip: its colour; whole window: the page body's
+uniform float darkLift;      // share of a field darker than the key that comes through
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
 
 vec2 toCopy(vec2 uv) { return uv * (1.0 - 2.0 * padding) + padding; }
 
-// The least alpha that explains `pixel` as some colour over `key`.
+// The least alpha that explains `pixel` as some colour over `key`. On a dark key, text and
+// glyphs are lighter than it, and a darker field is a box's fill (a focused omnibox), so that
+// direction only comes through by darkLift; on a light key it is the other way round.
 float liftedAlpha(vec3 pixel, vec3 key) {
-    vec3 d  = pixel - key;
-    vec3 a3 = max(d / max(vec3(1.0) - key, vec3(0.001)), -d / max(key, vec3(0.001)));
-    return clamp(max(max(a3.r, a3.g), a3.b), 0.0, 1.0);
+    vec3  d     = pixel - key;
+    vec3  up3   = d / max(vec3(1.0) - key, vec3(0.001));
+    vec3  down3 = -d / max(key, vec3(0.001));
+    float up    = max(max(up3.r, up3.g), up3.b);
+    float down  = max(max(down3.r, down3.g), down3.b);
+    bool  dark  = dot(key, vec3(0.2126, 0.7152, 0.0722)) < 0.5;
+    return clamp(dark ? max(up, down * darkLift) : max(up * darkLift, down), 0.0, 1.0);
 }
 
 void main() {
@@ -1473,8 +1480,9 @@ void main() {
         }
     }
 
-    // Premultiplied: the foreground lifted off its key, over one tint of the frame colour.
-    vec3 foreground = pixel - key * (1.0 - a);
+    // Premultiplied: the foreground lifted off its key, over one tint of the frame colour. With
+    // darkLift < 1 a pixel can sit beyond what `a` explains; it comes through as black or white.
+    vec3 foreground = clamp(pixel - key * (1.0 - a), vec3(0.0), vec3(a));
     float boosted   = a + 0.6 * a * (1.0 - a);
     foreground *= boosted / max(a, 0.001);
     a = boosted;
